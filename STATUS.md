@@ -60,6 +60,11 @@ come later (Order of the Sinking Star shows its first one 54 s after launch) han
 Check on the EX: Custom 35 W, autotune on with a target, start a Vulkan game without XeSS (Enshrouded). After 30 s,
 the status line says it stays out, the log line ends "(35 W, your limit)", and
 `cat /sys/class/powercap/intel-rapl-mmio:0/constraint_0_power_limit_uw` reads 35000000.
+**MangoHud's frame-time log starts again (2026-11-12):** the wrapper hid MangoHud with `no_display`, and MangoHud up to
+0.8.4 never starts `autostart_log` then, so autotune had no frame rate in any game without XeLL. Now an empty layout at
+zero alpha hides it. Autotune also reads only a log written since the game started (after a plugin restart it read
+another game's old log whole) and looks for it every second until it appears. Check on the EX: autotune on, start a game without XeSS (Enshrouded): nothing is drawn, a CSV
+appears in `~/homebrew/data/ClawDeck/mangohud/`, and the status line shows fps.
 
 **XeSS XMX package 20261111 (2026-11-10):** pinned without waiting (maintainer's word for HHHHanasak1's releases).
 New on the EX (Xe3): install.sh's default is "stock mode", the package's unpatched Mesa 26.3 plus its Vulkan layer,
