@@ -31,7 +31,7 @@ MODELS: dict[str, dict] = {
                 "tdp": {"min": 8, "battery_max": 30, "plugged_max": 30, "sppt_max": 37}, "panel_hz": [60, 120]},
     # the Arc G3 version (Arc B370, 10 Xe3 cores; Oct 2026) is believed to share the board id: not confirmed yet
     "MS-1T91": {"name": "MSI Claw 8 EX AI+", "soc": "Panther Lake", "gpu": "Arc B390 / B370 (Xe3)", "xmx": True,
-                "tdp": {"min": 8, "battery_max": 35, "plugged_max": 35, "sppt_max": 45}, "panel_hz": [60, 120],
+                "tdp": {"min": 8, "battery_max": 30, "plugged_max": 30, "sppt_max": 45}, "panel_hz": [60, 120],
                 "vrr": [30, 120]},
     "MS-1T8K": {"name": "MSI Claw A8", "soc": "AMD Ryzen Z2 Extreme", "gpu": "Radeon 890M", "xmx": False,
                 "tdp": {"min": 7, "battery_max": 35, "plugged_max": 35, "sppt_max": 40}, "panel_hz": [60, 120]},
