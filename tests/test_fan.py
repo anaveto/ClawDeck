@@ -46,12 +46,67 @@ def test_presets_write_both_fans_then_enable_and_survive_revert(tmp_path):
     for n in (1, 2):
         assert [int(open(f"{h}/pwm{n}_auto_point{i}_pwm").read()) for i in range(1, 7)] == [fan.to_pwm(d) for d in fan.PRESETS["quiet"]]
         assert open(f"{h}/pwm{n}_enable").read().strip() == "1"
-        # temperatures are the EC's axis: never written
+        # Quiet has no temperatures of its own: MSI's stay
         assert [int(open(f"{h}/pwm{n}_auto_point{i}_temp").read()) for i in range(1, 7)] == FACTORY_T
     sysfs.revert_all()                                   # closing a game must not undo the fan choice
     assert open(f"{h}/pwm1_enable").read().strip() == "1"
     assert fan.apply(h, "auto")["ok"]
     assert open(f"{h}/pwm1_enable").read().strip() == "2" and open(f"{h}/pwm2_enable").read().strip() == "2"
+
+
+def _like_the_driver(monkeypatch):
+    """The real driver keeps whole EC percent, rounding down on write and on read, and enable=2 on either fan puts
+    back the boot-time tables of both fans."""
+    real = sysfs.write
+
+    def write(path, value, persist=False):
+        path = str(path)
+        if "_auto_point" in path and path.endswith("_pwm"):
+            value = (int(value) * 100 // 255) * 255 // 100
+        ok = real(path, value, persist=persist)
+        if path.endswith("_enable") and int(value) == 2:
+            h = os.path.dirname(path)
+            for n in (1, 2):
+                for i in range(6):
+                    with open(f"{h}/pwm{n}_auto_point{i + 1}_temp", "w") as f:
+                        f.write(f"{FACTORY_T[i]}\n")
+                    with open(f"{h}/pwm{n}_auto_point{i + 1}_pwm", "w") as f:
+                        f.write(f"{FACTORY_P[i]}\n")
+        return ok
+    monkeypatch.setattr(fan.sysfs, "write", write)
+
+
+def test_every_duty_survives_the_drivers_rounding():
+    for d in range(101):
+        ec = fan.to_pwm(d) * 100 // 255                  # what the EC keeps
+        assert ec == d and fan.to_pct(ec * 255 // 100) == d
+
+
+def test_presets_read_back_ok_through_the_drivers_rounding(tmp_path, monkeypatch):
+    root, h = _hwmon(tmp_path)
+    _like_the_driver(monkeypatch)
+    for p in ("extreme", "quiet", "cooling", "extreme", "full"):
+        r = fan.apply(h, p)
+        assert r["ok"], (p, r)
+        temps = fan.PRESET_TEMPS.get(p, FACTORY_T)
+        for f in r["read"]["fans"]:                        # both fans: the second fan's restore must not undo the first
+            assert f["duties"] == fan.PRESETS[p] and f["temps"] == temps, (p, f)
+
+
+def test_extreme_writes_its_own_temperatures_on_both_fans_in_order(tmp_path, monkeypatch):
+    root, h = _hwmon(tmp_path)
+    seen, real = [], sysfs.write
+
+    def write(path, value, persist=False):
+        ok = real(path, value, persist=persist)
+        if str(path).endswith("_temp") and "pwm1_" in str(path):
+            seen.append([int(open(f"{h}/pwm1_auto_point{i}_temp").read()) for i in range(1, 7)])
+        return ok
+    monkeypatch.setattr(fan.sysfs, "write", write)
+    assert fan.apply(h, "extreme")["ok"]
+    for n in (1, 2):
+        assert [int(open(f"{h}/pwm{n}_auto_point{i}_temp").read()) for i in range(1, 7)] == fan.PRESET_TEMPS["extreme"]
+    assert seen and all(t == sorted(t) for t in seen)    # never out of order between two writes
 
 
 def test_custom_snaps_and_needs_six(tmp_path):
@@ -87,3 +142,9 @@ def test_kde_charge_limit_written_and_removed(tmp_path, monkeypatch):
     assert "BatteryChargeStopThreshold=80" in t and "foo=1" in t
     assert fan.kde_charge_limit(str(tmp_path), None)
     assert "BatteryChargeStopThreshold" not in rc.read_text()
+
+
+def test_speeds_reads_rpm_and_mode_only(tmp_path):
+    _, h = _hwmon(tmp_path)
+    assert fan.speeds(h) == [{"fan": 1, "rpm": 3428, "enable": 2}, {"fan": 2, "rpm": 3428, "enable": 2}]
+    assert fan.speeds(None) == []

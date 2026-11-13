@@ -10,13 +10,15 @@ const FAN_OPTIONS = [
   { data: "auto", label: "Automatic (MSI)" },
   { data: "quiet", label: "Quiet" },
   { data: "cooling", label: "Cooling" },
+  { data: "extreme", label: "Extreme" },
   { data: "full", label: "Full speed" },
   { data: "custom", label: "Custom" },
 ];
 const FAN_DOES: Record<string, string> = {
   auto: "MSI's own fan control, as the Claw ships.",
   quiet: "Off at idle, then a gentle ramp: quieter in light games.",
-  cooling: "Spins from idle and ramps earlier: cooler, so the chip holds its clocks longer.",
+  cooling: "Spins from idle and ramps earlier, but tops out at 75 %: from 57 °C slower than MSI's own control.",
+  extreme: "Off under 38 °C, then up to full speed by 82 °C: the coolest curve short of full speed.",
   full: "Both fans at full speed.",
   custom: "Your own six points (Fan curve below).",
 };
