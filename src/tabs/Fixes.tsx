@@ -3,6 +3,7 @@ import { notify } from "../components/notify";
 import { FC, useEffect, useState } from "react";
 
 import { getFixes, getHealth, runFix, setWideVrr, Fixes, Health } from "../api";
+import { getLaunchOptions, hasWrapper, setLaunchOptions, withWrapper } from "../steam";
 import { confirmRestart } from "../components/confirm";
 import { Brightness } from "../components/Brightness";
 import { explain, Group, Problem, Status, useExplanations } from "../components/Hint";
@@ -35,6 +36,10 @@ export const FixesTab: FC<{ quick?: boolean }> = ({ quick }) => {
     setBusy(true);
     try {
       const r = await runFix(id, false);
+      if (r.ok && r.appid && r.wrapper) {     // ES-DE per game: its shortcut gets the launch wrapper through Steam
+        const opts = (await getLaunchOptions(r.appid)) ?? "";
+        if (!hasWrapper(opts)) setLaunchOptions(r.appid, withWrapper(opts, r.wrapper));
+      }
       toast(r.ok ? (r.next ?? (r.removed ? "Face-button fix removed; InputPlumber restarted" : "Done")) : `Not done: ${r.error ?? r.log ?? "see the log"}`);
       setErr(r.ok ? null : (r.error ?? "unknown error"));
     } finally { setBusy(false); load(true); }
@@ -133,7 +138,7 @@ export const FixesTab: FC<{ quick?: boolean }> = ({ quick }) => {
       {!quick && problems.map((h) => (
         <PanelSectionRow key={h.id}>
           <Status ok={false} label={h.title} detail={h.detail} />
-          {h.fix && <ButtonItem layout="below" disabled={busy} onClick={() => fix(h.fix!)}>{h.fix === "install_xess" ? "Install the XeSS XMX driver (Setup)" : h.fix === "quiet_split_lock_log" ? "Silence the split-lock flood" : h.fix === "report_unknown_model" ? "Save a hardware survey for an issue" : "Fix"}</ButtonItem>}
+          {h.fix && <ButtonItem layout="below" disabled={busy} onClick={() => fix(h.fix!)}>{h.fix === "install_xess" ? "Install the XeSS XMX driver (Setup)" : h.fix === "quiet_split_lock_log" ? "Silence the split-lock flood" : h.fix === "report_unknown_model" ? "Save a hardware survey for an issue" : h.fix === "esde_per_game" ? "Set up ES-DE per game" : "Fix"}</ButtonItem>}
         </PanelSectionRow>
       ))}
       {!quick && (

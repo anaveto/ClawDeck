@@ -22,7 +22,7 @@ export type Stack = { hhd: boolean; inputplumber: boolean; powerstation: boolean
 export type Caps = { device: string; known: boolean; vendor: string | null; beta: boolean; xmx: boolean | null;
   fan: "msi" | "oxp" | null; charge_limit: boolean; face_buttons: boolean; hdr_brightness: boolean };
 export type Hardware = { product: string; known: boolean; kernel: string; cpu_model: string; gpu_driver: string | null; model: { name: string; soc: string; gpu: string; xmx: boolean }; caps?: Caps; stack: Stack; other_plugins?: { injector: string[]; power: string[] } };
-export type AutotuneStatus = { running: boolean; enabled: boolean; appid?: string; learned?: any; paused?: boolean; no_frames?: boolean; game_fg?: number; last?: any;
+export type AutotuneStatus = { running: boolean; enabled: boolean; appid?: string; title?: string | null; learned?: any; paused?: boolean; no_frames?: boolean; game_fg?: number; last?: any;
   phase?: "measure" | "balance" | "lower" | "hold" | "target"; target?: number | null;
   unreachable?: boolean; best_fps?: number | null; floor_learned?: number | null; fg?: number; tdp?: number; ceiling_tdp?: number; floor_tdp?: number; keep_pct?: number; keep_fps?: number; saves_w?: number | null;
   max_fps?: number | null; avg_fps?: number | null; low_fps?: number | null; pct_of_max?: number | null; fps_per_w?: number | null;
@@ -47,7 +47,8 @@ export const updateCheck = callable<[], UpdateState>("update_check");
 export const updatePrepare = callable<[], { ok: boolean; error?: string }>("update_prepare");
 export const getSetting = callable<[key: string], any>("get_setting");
 export const setSetting = callable<[key: string, value: any], boolean>("set_setting");
-export type Fix = { ok: boolean; error?: string; log?: string; path?: string; next?: string; note?: string | null; removed?: string[] };
+export type Fix = { ok: boolean; error?: string; log?: string; path?: string; next?: string; note?: string | null; removed?: string[];
+  appid?: string | null; wrapper?: string };   // esde_per_game: the wrapper the UI puts in that shortcut's launch options
 export const runFix = callable<[fix: string, allowUnpinned: boolean], Fix>("run_fix");
 export type SelfTest = { ok: boolean; passed?: number; failed?: number; lines?: string[]; summary?: string; error: string | null };
 export const selfTest = callable<[], SelfTest>("self_test");
@@ -156,6 +157,7 @@ export const setChargeLimit = callable<[limit: number | null], WriteResult>("set
 /** base/tdp: what the game saved for this power source itself; pick: the limit that applies now on this power source
  *  (the game's own pick, else the last pick on it, else the default): what the profile list and the slider show. */
 export type PowerSlot = { appid: string | null; plugged: boolean; base: string | null; tdp: number | null; running?: boolean;
+  title?: string | null;   // the game an emulator frontend (ES-DE) runs, saved apart from the frontend
   pick?: { profile: string; tdp: number | null; from: "game" | "last" | "default" } };
 export const powerSlot = callable<[appid: string | null], PowerSlot>("power_slot");
 export const resetPowerSlot = callable<[appid: string | null], { ok: boolean; error?: string }>("reset_power_slot");
