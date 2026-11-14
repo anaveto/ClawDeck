@@ -752,7 +752,8 @@ class Autotune:
         l, now, T = s.learned, time.monotonic(), s.target or 0
         if not T:
             return
-        T = self._cap(s, fps, smp, now) or T                # the game's own frame cap under the target is the minimum
+        cap = self._cap(s, fps, smp, now)
+        T = cap or T                                        # the game's own frame cap under the target is the minimum
         # every reading counts, a low one too: under the target is under it, loading screen or not. Raising is the
         # safe side; skipping fps under 35 % of the target as "a menu" kept a game at 8 W and 11-28 fps for 40 s
         # (Order of the Sinking Star, target 120, 2026-11-12)
@@ -764,7 +765,11 @@ class Autotune:
         if smp.pkg_w:
             s.fps_per_w = fps / smp.pkg_w
         top = self._top(s)
-        if fps < T * G_AT:
+        # under a cap the game's own pacing varies (a 30 fps lock reads 28.6-30.4 at the full TDP): judged on G_WIN s
+        # averages within G_CAP_SPREAD, the tolerance the cap was found with, not on single seconds (Midnight Club LA,
+        # 2026-11-14: one 28.6 fps second at 29 W sent it back to 30 W and made 30 W the floor)
+        level = sum(s.g_cap_hist[-G_WIN:]) / len(s.g_cap_hist[-G_WIN:]) if cap else fps
+        if level < (T * (1 - G_CAP_SPREAD) if cap else T * G_AT):
             # under the minimum this second: watts at once. It used to take a 3 s average under 93 % (56 fps for 60),
             # and 56-59 fps got +1 W only after 12 s
             s.g_last_miss, s.g_steady = now, 0
@@ -775,7 +780,10 @@ class Autotune:
                 # under the minimum at the full TDP: the game needs every watt, so the full TDP is the floor until the
                 # game gets lighter (the floor's decay below). Only a miss right after a step down used to set it, and
                 # Enshrouded (~66 fps at 30 W, under 60 in heavy scenes) was cut to 27-29 W six times in 8 minutes,
-                # every cut ended by a miss (maintainer, 2026-11-14: "it shouldn't try to lower power in demanding games")
+                # every cut ended by a miss (maintainer, 2026-11-14: "it shouldn't try to lower power in demanding games").
+                # Not under a cap: there the game's own hitches miss at the full TDP too, and watts can't help them
+                if cap:
+                    return
                 if s.g_floor < top:
                     s.g_floor, s.g_floor_at = top, now
                     log.info("autotune target: under %.0f fps at the full %d W: no lowering until the game gets lighter",
@@ -787,14 +795,14 @@ class Autotune:
             # watts roughly follow frames: the share missing, at least +2 W (+4 W far under), up to the maximum in one
             # step. No cap: a raise that overshoots (a loading hitch isn't short of watts) costs a few seconds of watts,
             # a capped one costs frames under the minimum (maintainer, 2026-11-12)
-            need = -(-int(l.tdp * (T / max(fps, 1.0) - 1) * 10) // 10)
-            step = max(G_RAISE_BIG if fps < T * 0.75 else G_RAISE, need)
+            need = -(-int(l.tdp * (T / max(level, 1.0) - 1) * 10) // 10)
+            step = max(G_RAISE_BIG if level < T * 0.75 else G_RAISE, need)
             w, was = min(top, l.tdp + step), l.tdp
             if blamed:
                 w, s.g_last_drop = min(top, max(s.g_drop_from, l.tdp + 1)), None   # exactly back to what held
             if self._tdp(l, w):
                 s.g_last_change, s.g_hist = now, []
-                self._did(s, f"{fps:.0f} fps, under the {T:.0f} fps minimum: raised TDP to {w} W", f"+{w - was} W")
+                self._did(s, f"{level:.0f} fps, under the {T:.0f} fps minimum: raised TDP to {w} W", f"+{w - was} W")
             return
         s.g_maxed_since, s.unreachable = None, False
         # the floor comes down only when the game got lighter (well above the target, or the GPU clearly idle under a
@@ -812,6 +820,8 @@ class Autotune:
             s.settled, l.held = True, l.tdp
         floor = max(s.floor_tdp, s.g_floor)
         lowest = min(s.g_hist)
+        if cap and len(s.g_hist) >= G_WIN:                # under a cap: the lowest G_WIN s average, as for a miss
+            lowest = min(sum(s.g_hist[i:i + G_WIN]) / G_WIN for i in range(len(s.g_hist) - G_WIN + 1))
         far = lowest >= T * G_FAR
         wait = G_LOWER_FAST if far else G_LOWER_AFTER
         # judged on the lowest second since the last change (up to G_LOWER_AFTER s), not the average: the most a step
@@ -819,7 +829,8 @@ class Autotune:
         # target pins fps there, so it can never be exceeded: at the target with the GPU under G_BUSY, the limit holds
         # it, not the power, and 1 W is safe (a miss right after it undoes the step and makes it the floor)
         safe = int(l.tdp * (1 - T * G_SAFE / lowest)) if lowest >= T * G_LOWER_OVER else 0
-        if safe < 1 and lowest >= T * G_AT and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY:
+        if (safe < 1 and lowest >= (T * (1 - G_CAP_SPREAD) if cap else T * G_AT)
+                and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY):
             safe = 1
         if (l.tdp > floor and len(s.g_hist) >= wait and safe >= 1
                 and now - s.g_last_change >= wait and now - s.g_last_miss >= wait):
