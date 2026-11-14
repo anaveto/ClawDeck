@@ -1660,70 +1660,68 @@ class _BusyGame(_Game):
         return smp
 
 
-def test_target_starts_at_your_tdp_and_lowers_only_with_room_to_spare(fake_hw, monkeypatch):
-    """From the set TDP down, never under the target: a step only while the lowest second is 20 % over the target,
-    and only as far as the fps after it, with frames following watts, is still 3 % over it. A heavy scene gets watts
-    back at once (DeckyTDPTuner's raise)."""
+def test_target_holds_the_target_with_the_fewest_watts(fake_hw, monkeypatch):
+    """From the set TDP: watts come off only while the lowest 3 s average is 20 % over the target, to the watts aimed at
+    10 % over it. A heavier scene still at the target keeps the watts; one under it gets watts at once, aimed at 10 %
+    over (user, 2026-11-14: 50 fps at 20 W for a 60 target has to get more watts)."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60)
     game = _BusyGame(at, 4.0, cap=90.0)
     assert s.learned.tdp == 25                                   # your TDP, not mid-range
     run(300)
-    assert s.learned.tdp == 17 and s.phase == "target"          # 68 fps; at 16 W (64) it is not 20 % over
+    assert s.learned.tdp == 17 and s.phase == "target"          # 68 fps at 17 W: no more 20 % over
     assert min(run.seen["fps"]) >= 60 and at.status()["saves_w"] == 8
-    game.per_w = 2.95                                            # a heavy scene: 47 fps at 16 W
-    run(12)
-    assert s.learned.tdp >= 19 and "under the 60 fps minimum" in s.last_action   # seconds, not minutes
+    game.per_w = 3.5                                             # heavier: 59.5 fps at 17 W, one frame under at most
     run(60)
-    assert s.learned.tdp == 21                                   # 62 fps: no room for another step
+    assert s.learned.tdp == 17
+    game.per_w = 2.9                                             # 49 fps at 17 W: under
+    run(4)
+    assert s.learned.tdp == 23 and "under 60" in s.last_action   # at once, to what gives 66
     at.session = None
 
-
 def test_target_with_a_frame_limit_at_the_target_lowers_while_the_gpu_has_headroom(fake_hw, monkeypatch):
-    """Steam's frame limit at the target pins fps there, so it is never exceeded: the GPU's headroom says the limit
-    holds it, 1 W at a time, and it stops where the GPU gets busy."""
+    """Steam's frame limit at the target pins fps there, so the fps can't show spare watts: with the GPU not maxed, 1 W
+    at a time while the target holds, and it stops where the GPU gets busy."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     _BusyGame(at, 5.0, cap=60.0)                                 # 12 W gives 60
     run(400)
     assert s.learned.tdp == 12 and min(run.seen["fps"]) >= 60
     changes = s.last_change_at
     run(240)
-    assert s.learned.tdp == 12 and s.last_change_at == changes   # locked: the GPU is busy at 12 W
+    assert s.learned.tdp == 12 and s.last_change_at == changes   # the GPU is busy at 12 W
     at.session = None
 
-
-def test_target_fps_a_miss_right_after_lowering_makes_that_the_floor(fake_hw, monkeypatch):
+def test_target_a_step_down_that_misses_goes_back_and_waits_before_trying_again(fake_hw, monkeypatch):
+    """No floor: a step down that ends under the target goes straight back, nothing goes under that TDP for G_HOLD_S,
+    then it tries again (the scene may be lighter). Without the wait a locked game would drop under its lock every
+    half minute."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
-    _Game(at, lambda tdp, *_: 70.0 if tdp >= 18 else 50.0)      # calm at 18 W, misses under it
-    run(200)
-    assert s.g_floor == 18 and s.learned.tdp == 18              # tried 17 once, missed, straight back to 18
-    tried = len([1 for _ in range(100) if (run(1), s.learned.tdp)[1] == 17])
-    assert tried == 0 and s.learned.tdp == 18                    # not again within the floor's 5 minutes
+    _Game(at, lambda tdp, *_: 66.0 if tdp >= 18 else 50.0, gpu_busy=50)   # held at 66 from 18 W, 50 under it
+    run(100)
+    assert s.learned.tdp == 18 and "back to 18 W" in s.last_action
+    run(autotune.G_HOLD_S - 120)
+    assert 17 not in run.seen["tdp"][100:]                       # not again within the wait
+    run(240)
+    assert 17 in run.seen["tdp"][100:] and s.learned.tdp == 18   # tried once more, back again
     at.session = None
 
-
-def test_target_a_miss_at_the_full_tdp_keeps_the_full_tdp(fake_hw, monkeypatch):
-    """Enshrouded, 2026-11-14: 60 fps target, ~66 fps at 30 W in calm scenes and under 60 in heavy ones, GPU 99 % busy.
-    After every miss at the full TDP it was cut to 27-29 W again, six cuts in 8 minutes, each ended by a miss. A miss
-    at the full TDP shows the game needs every watt: nothing is lowered while it stays that heavy (maintainer: "it
-    shouldn't try to lower power in demanding games"). Once it gets clearly lighter, the floor comes down again."""
+def test_target_a_demanding_game_keeps_its_watts(fake_hw, monkeypatch):
+    """Enshrouded, 2026-11-14: 60 fps target, ~66 fps at 30 W in calm scenes and ~57 in heavy ones, GPU 99 % busy. It
+    was cut to 27-29 W six times in 8 minutes. 66 is not 20 % over, and the GPU is maxed: no step down; 57 at the full
+    TDP can't get more. A much lighter area, 20 % over, saves watts."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     t0, scene = autotune.time.monotonic(), {"calm": 66.0}
     heavy = lambda: (autotune.time.monotonic() - t0) % 120 >= 90          # 90 s calm, 30 s heavy, over and over
     _Game(at, lambda tdp, *_: (57.0 if heavy() else scene["calm"]) * tdp / 30, gpu_busy=99)
-    run(100)                                                              # the first heavy scene: a miss at 30 W
-    assert s.g_floor == 30 and s.learned.tdp == 30
-    run(600)
-    assert set(run.seen["tdp"][100:]) == {30}                             # five more heavy scenes, no cut
-    scene["calm"], heavy = 75.0, lambda: False                            # a much lighter area from here on
     run(700)
-    assert s.learned.tdp < 30 and min(run.seen["fps"][-300:]) >= 60       # watts saved again, the minimum kept
-    at.session = None
-
+    assert set(run.seen["tdp"]) == {30}                                   # six heavy scenes, no cut
+    scene["calm"], heavy = 80.0, lambda: False                            # a much lighter area from here on
+    run(60)
+    assert s.learned.tdp == 25 and min(run.seen["fps"][-20:]) >= 60      # 80 fps at 30 W: to what gives ~66
 
 def test_target_holds_a_games_own_frame_cap_with_the_fewest_watts(fake_hw, monkeypatch):
-    """A PS3 game locked at 30 fps, target 60 (maintainer, 2026-11-14): under the target at the full TDP, steady, GPU
-    idle part of the time. More watts can't raise it, so its own cap is the minimum, held with the fewest watts,
-    instead of the full TDP for the whole session."""
+    """A PS3 game locked at 30 fps, target 60 (maintainer, 2026-11-14): under the band at the full TDP, steady, GPU
+    idle part of the time. More watts can't raise it, so its own lock takes the target's place, held with the fewest
+    watts instead of the full TDP for the whole session."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     _BusyGame(at, 3.0, cap=30.0, busy_capped=50)                  # locked at 30 fps; 10 W gives 30
     t = 0
@@ -1731,17 +1729,14 @@ def test_target_holds_a_games_own_frame_cap_with_the_fewest_watts(fake_hw, monke
         run(1)
         t += 1
     assert s.learned.cap == 30 and t <= 11 and "own cap" in s.last_action   # found at the full TDP in seconds
-    assert s.g_floor == 8 and s.learned.tdp == 30                 # the misses against 60 don't hold the watts
     run(400)
-    assert s.learned.tdp == 10 and min(run.seen["fps"][30:]) >= 30 * autotune.G_AT   # held with 10 W, never under
+    assert s.learned.tdp == 10 and min(run.seen["fps"][30:]) >= 30 - autotune.G_TOL_FPS   # held with 10 W
     at.session = None
-
 
 def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, monkeypatch):
     """Midnight Club LA (RPCS3, locked at 30, target 60, 2026-11-14): 29.9-30.2 fps with one 28.6 fps second every
-    13 s, at any TDP. Those dips are the game's own pacing: judged on 3 s averages within the cap's tolerance they are
-    no miss, so the watts come down to what holds 30, and a dip at the full TDP doesn't make the full TDP the floor.
-    A real shortage (fps steadily under the cap) still gets watts back."""
+    13 s, at any TDP. Their 3 s averages stay within a frame of 30, so the watts come down to what holds 30. A real
+    shortage still gets watts back."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     game = _BusyGame(at, 3.0, cap=30.0, busy_capped=40)          # 10 W holds 30
     tick = {"n": 0}
@@ -1755,42 +1750,46 @@ def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, mo
         return f
     game.fps = paced
     run(30)
-    assert s.learned.cap == 30 and s.g_floor < 30
+    assert s.learned.cap == 30
     run(400)
-    assert s.learned.tdp <= 11 and s.g_floor < 30               # down to what holds 30, dips or not
+    assert s.learned.tdp <= 11                                   # down to what holds 30, dips or not
     game.per_w = 2.0                                             # heavier scene: 10 W now gives 20 fps
     run(10)
-    assert s.learned.tdp >= 15 and "under the 30 fps minimum" in s.last_action
+    assert s.learned.tdp >= 15 and "under 30" in s.last_action
+    run(30)
+    last = run.seen["fps"][-20:]
+    assert min(sum(last[i:i + 3]) / 3 for i in range(18)) >= 30 - autotune.G_TOL_FPS   # 30 again, its own dips aside
     at.session = None
-
 
 def test_target_a_game_steady_just_under_the_target_is_not_a_frame_cap(fake_hw, monkeypatch):
-    """Enshrouded at the full TDP, steady at 59 fps for a 60 target with the GPU busy under 85 % (2026-11-14): that
-    is the game missing the target, not a cap under it, so the full TDP stays."""
+    """Enshrouded at the full TDP, steady at 59 fps for a 60 target with the GPU busy under 85 % (2026-11-14): within a
+    frame of the target, that holds it; it isn't a lock under it. The GPU isn't maxed, so watts come off while 59 holds."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     _BusyGame(at, 3.0, cap=59.0, busy_capped=80)                  # held at 59 fps by the game, GPU 80 % busy
-    run(120)
-    assert s.learned.cap is None and s.learned.tdp == 30
+    run(400)
+    assert s.learned.cap is None and s.learned.tdp == 20 and min(run.seen["fps"]) >= 59
     at.session = None
 
-
 def test_target_a_frame_cap_lifts_when_the_game_runs_faster(fake_hw, monkeypatch):
-    """The cap goes as soon as the game runs over it (a menu at 60, the lock removed), and a game unlocked while the
-    power alone held it at the old cap is found by the check every RESCAN_S (+G_RAISE_BIG W)."""
+    """The cap goes as soon as the game runs 20 % over it (a menu at 60, the lock removed). A game unlocked while the
+    power alone held it under the old cap is found by the check every RESCAN_S at the full TDP; a cap that still
+    holds there gets its watts back at once."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     game = _BusyGame(at, 3.0, cap=30.0, busy_capped=50)
     run(430)
     assert s.learned.cap == 30 and s.learned.tdp == 10
-    game.per_w, game.cap = 4.0, 34.0                              # 13 % over the cap for a while: fps varies
+    game.per_w, game.cap = 4.0, 34.0                              # 13 % over the cap for a while: not 20 %
     run(30)
     assert s.learned.cap == 30
-    game.per_w, game.cap = 3.0, 90.0                              # unlocked: 30 fps at 10 W is the power now
+    held = s.learned.tdp
+    run(autotune.RESCAN_S)                                        # the check: still locked at the full TDP
+    assert s.learned.cap == 30 and s.learned.tdp == held and "cap holds" in s.last_action
+    game.per_w, game.cap = 3.0, 90.0                              # unlocked: the power alone holds it now
     run(autotune.RESCAN_S)
-    assert s.learned.cap is None                                  # +4 W ran it over 30: the cap is gone
+    assert s.learned.cap is None                                  # the full TDP ran it over the band: the cap is gone
     run(60)
-    assert s.learned.tdp >= 20 and min(run.seen["fps"][-20:]) >= 60 * autotune.G_AT   # 60 again, with the watts
+    assert s.learned.tdp == 22 and min(run.seen["fps"][-20:]) >= 60   # the target again, with the watts
     at.session = None
-
 
 def test_target_a_saved_frame_cap_holds_from_the_next_start(fake_hw, monkeypatch):
     """The cap is saved with what the game learned: the next start holds it at the saved watts from the first second,
@@ -1824,14 +1823,13 @@ def test_target_out_of_reach_stays_at_your_tdp_and_keeps_your_target(fake_hw, mo
 
 
 def test_target_counts_rendered_frames_with_frame_generation(fake_hw, monkeypatch):
-    """No XeLL figure, ClawDeck's 2x frame generation on: 128 presented is 64 rendered."""
+    """No XeLL figure, ClawDeck's 2x frame generation on: 136 presented is 68 rendered."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60)
     s.fg = 2
     _BusyGame(at, 8.0, cap=180.0, source="presented")
     run(300)
     assert s.learned.tdp == 17 and s.multiplier == 2.0          # 136 presented = 68 rendered at 17 W
     at.session = None
-
 
 def test_most_frames_mode_measures_rendered_frames_with_frame_generation(fake_hw, monkeypatch):
     at, s = _tuner(fake_hw, monkeypatch)
@@ -1872,24 +1870,24 @@ def test_target_raises_above_your_tdp_and_saves_where_it_settles_for_the_next_st
     p.run(p.game_started("42"))
     s = p.autotune.session
     assert p.chip() == 8 and s.ceiling_tdp == 8 and s.max_tdp == 30 and s.phase == "target"
-    _BusyGame(p.autotune, 3.0)                                     # 20 W gives 60
+    _BusyGame(p.autotune, 3.0)                                     # 22 W gives 66, 10 % over the target
     for _ in range(120):
         clock["t"] += 1
         p.autotune._step()
-    assert s.learned.tdp == 20 and p.chip() == 20 and s.settled
-    assert p.run(p.get_autotune())["tdp"] == 20
+    assert s.learned.tdp == 22 and p.chip() == 22 and s.settled
+    assert p.run(p.get_autotune())["tdp"] == 22
     p.run(p.game_stopped("42"))
-    assert p.profiles.own("42", False)["base"] == "custom" and p.profiles.own("42", False)["tdp"] == 20
+    assert p.profiles.own("42", False)["base"] == "custom" and p.profiles.own("42", False)["tdp"] == 22
     assert p.chip() == 8                                           # the menus keep your 8 W
     p.run(p.game_started("42"))
-    assert p.chip() == 20 and p.autotune.session.learned.tdp == 20  # the next start is there from launch
+    assert p.chip() == 22 and p.autotune.session.learned.tdp == 22  # the next start is there from launch
     p.autotune.session.thermal_cap = 18                            # a step the temperature guard made is not saved
     p.autotune.session.settled, p.autotune.session.learned.held = True, 25
     p.run(p.game_stopped("42"))
-    assert p.profiles.own("42", False)["tdp"] == 20
+    assert p.profiles.own("42", False)["tdp"] == 22
     p.run(p.game_started("42"))
     p.run(p.game_stopped("42"))                                    # a quick launch, not settled: nothing saved
-    assert p.profiles.own("42", False)["tdp"] == 20
+    assert p.profiles.own("42", False)["tdp"] == 22
 
 
 def test_target_raises_at_once_however_low_the_fps(fake_hw, monkeypatch):
@@ -1900,13 +1898,14 @@ def test_target_raises_at_once_however_low_the_fps(fake_hw, monkeypatch):
     _BusyGame(at, 2.0)                                           # 16 fps at 8 W, 70 at 35 W
     run(10)
     steps = [t for i, t in enumerate(run.seen["tdp"]) if i == 0 or t != run.seen["tdp"][i - 1]]
-    assert steps == [8, 35] and "120 fps minimum" in s.last_action   # one raise, straight to the maximum
+    assert steps == [8, 35] and "under 120" in s.last_action    # one raise, straight to the maximum
     at.session = None
 
 
-def test_target_is_a_minimum_every_second_and_lowering_is_judged_on_the_lowest(fake_hw, monkeypatch):
-    """60 fps means 60 fps minimum (maintainer, 2026-11-12): one second under it raises at once, and a game that
-    averages 66 but dips to 62 every other second has no room for a step down (62 is under 60 + 3 % after one)."""
+def test_target_one_slow_or_fast_second_is_no_trend(fake_hw, monkeypatch):
+    """3 s averages decide, not single seconds: a game alternating 62 and 70 fps (66 on average) holds 60 without being
+    20 % over, so nothing changes; dips to 58 every other second still average over 59; a drop that averages 44 gets
+    watts at once."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
     s.max_tdp = 35
     beat = {"n": 0, "dip": 0.0}
@@ -1916,12 +1915,14 @@ def test_target_is_a_minimum_every_second_and_lowering_is_judged_on_the_lowest(f
         return (62.0 if beat["n"] % 2 else 70.0) - beat["dip"]
     _Game(at, fps, gpu_busy=99)                                  # power-bound: no frame limit holds it
     run(120)
-    assert s.learned.tdp == 20 and min(run.seen["fps"]) >= 60    # never lowered: the lowest second has no room
-    beat["dip"] = 4.0                                            # 58 fps every other second: under the minimum
-    run(2)
-    assert s.learned.tdp > 20 and "under the 60 fps minimum" in s.last_action   # within 2 s
+    assert s.learned.tdp == 20
+    beat["dip"] = 4.0                                            # 58 / 66
+    run(60)
+    assert s.learned.tdp == 20
+    beat["dip"] = 22.0                                           # 40 / 48
+    run(4)
+    assert s.learned.tdp > 20 and "under 60" in s.last_action
     at.session = None
-
 
 def test_target_saves_the_tdp_that_held_not_a_quit_menus(fake_hw, monkeypatch):
     """A TDP holds the target after G_SETTLE_S readings in a row at it; a 400 fps quit menu that lowers it after
@@ -1942,7 +1943,7 @@ def test_target_saves_the_tdp_that_held_not_a_quit_menus(fake_hw, monkeypatch):
 def test_target_fps_gets_the_tdp_moving_and_locked_fast(fake_hw, monkeypatch):
     """From your TDP to the settled watts in under a minute, then no more changes while the game holds."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    _BusyGame(at, 5.0, cap=100.0)                                # 14 W gives 70; 15 W (75) is the last 20 % over
+    _BusyGame(at, 5.0, cap=100.0)                                # 14 W gives 70: no more 20 % over, GPU busy
     t = 0
     while s.learned.tdp != 14 and t < 200:
         run(1)
@@ -1952,7 +1953,6 @@ def test_target_fps_gets_the_tdp_moving_and_locked_fast(fake_hw, monkeypatch):
     run(240)
     assert s.learned.tdp == 14 and s.last_change_at == changes and min(run.seen["fps"]) >= 60   # locked
     at.session = None
-
 
 def test_debug_launch_arms_one_launch_and_never_touches_another_tools_optiscaler(plugin, tmp_path, monkeypatch):
     p = plugin

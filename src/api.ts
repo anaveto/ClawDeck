@@ -24,7 +24,7 @@ export type Caps = { device: string; known: boolean; vendor: string | null; beta
 export type Hardware = { product: string; known: boolean; kernel: string; cpu_model: string; gpu_driver: string | null; model: { name: string; soc: string; gpu: string; xmx: boolean }; caps?: Caps; stack: Stack; other_plugins?: { injector: string[]; power: string[] } };
 export type AutotuneStatus = { running: boolean; enabled: boolean; appid?: string; title?: string | null; learned?: any; paused?: boolean; no_frames?: boolean; game_fg?: number; last?: any;
   phase?: "measure" | "balance" | "lower" | "hold" | "target"; target?: number | null;
-  unreachable?: boolean; best_fps?: number | null; floor_learned?: number | null; fg?: number; tdp?: number; ceiling_tdp?: number; floor_tdp?: number; keep_pct?: number; keep_fps?: number; saves_w?: number | null;
+  unreachable?: boolean; best_fps?: number | null; fg?: number; tdp?: number; ceiling_tdp?: number; floor_tdp?: number; keep_pct?: number; keep_fps?: number; saves_w?: number | null;
   max_fps?: number | null; avg_fps?: number | null; low_fps?: number | null; pct_of_max?: number | null; fps_per_w?: number | null;
   source?: "rendered" | "presented" | "frame-gen pick"; multiplier?: number | null; window_s?: number;
   last_action?: string | null; last_delta?: string | null; last_change_s?: number | null; bound?: "gpu" | "cpu" | "balanced";
