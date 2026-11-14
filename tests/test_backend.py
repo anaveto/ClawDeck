@@ -1581,6 +1581,16 @@ def test_target_holds_a_games_own_frame_cap_with_the_fewest_watts(fake_hw, monke
     at.session = None
 
 
+def test_target_a_game_steady_just_under_the_target_is_not_a_frame_cap(fake_hw, monkeypatch):
+    """Enshrouded at the full TDP, steady at 59 fps for a 60 target with the GPU busy under 85 % (2026-11-14): that
+    is the game missing the target, not a cap under it, so the full TDP stays."""
+    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
+    _BusyGame(at, 3.0, cap=59.0, busy_capped=80)                  # held at 59 fps by the game, GPU 80 % busy
+    run(120)
+    assert s.learned.cap is None and s.learned.tdp == 30
+    at.session = None
+
+
 def test_target_a_frame_cap_lifts_when_the_game_runs_faster(fake_hw, monkeypatch):
     """The cap goes as soon as the game runs over it (a menu at 60, the lock removed), and a game unlocked while the
     power alone held it at the old cap is found by the check every RESCAN_S (+G_RAISE_BIG W)."""

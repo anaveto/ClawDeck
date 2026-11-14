@@ -802,7 +802,10 @@ class Autotune:
         elif (cap is None and s.g_at_top >= G_CAP_S and len(s.g_cap_hist) >= G_CAP_S and fps < T * G_AT
               and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY):
             mid = statistics.median(s.g_cap_hist)
-            if mid >= MIN_TARGET and all(abs(f - mid) <= mid * G_CAP_SPREAD for f in s.g_cap_hist):
+            # at least G_CAP_OFF under the target: a cap lifts at G_CAP_OFF over it, so one closer to the target can't
+            # be told from the game just missing it (Enshrouded steady at 59-60 for a 60 target, 2026-11-14)
+            if (MIN_TARGET <= mid <= T / G_CAP_OFF
+                    and all(abs(f - mid) <= mid * G_CAP_SPREAD for f in s.g_cap_hist)):
                 l.cap = cap = round(mid, 1)
                 s.g_cap_at, s.g_hist, s.g_maxed_since, s.unreachable = now, [], None, False
                 s.g_floor, s.g_floor_at = s.floor_tdp, now      # those misses were against your target, not the cap
