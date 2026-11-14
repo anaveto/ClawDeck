@@ -1,8 +1,11 @@
 """Emulator frontends (ES-DE): which game runs, so each one gets its own power and Autotune."""
+import asyncio
 import os
 import struct
 import subprocess
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "py_modules"))
 
@@ -88,3 +91,24 @@ def test_a_torn_or_foreign_event_file_is_no_event(tmp_path):
     assert frontend.read(home) is None
     _touch(frontend.event_path(home), b"launch\nps3\n/r.iso\nR\n")
     assert frontend.read(home) is None
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="inotify is Linux's")
+def test_the_watch_wakes_only_when_the_script_writes(tmp_path, monkeypatch):
+    """No timer: the plugin's loop wakes when ES-DE's script renames the event into place, not for other files."""
+    home = _home(tmp_path)
+    monkeypatch.setattr(frontend, "_esde_running", lambda: False)
+    frontend.esde_install(home)
+    os.makedirs(os.path.dirname(frontend.event_path(home)), exist_ok=True)
+    seen = []
+
+    async def go():
+        w = frontend.Watch(home, lambda: seen.append(frontend.read(home)["event"]))
+        _touch(os.path.join(os.path.dirname(frontend.event_path(home)), "other"))
+        await asyncio.sleep(0.2)
+        subprocess.run([os.path.join(home, "ES-DE/scripts/game-start/clawdeck.sh"), "/r/nes/M.nes", "M", "nes", "NES"],
+                       env={"HOME": home, "PATH": "/bin:/usr/bin"}, check=True)
+        await asyncio.sleep(0.2)
+        w.close()
+    asyncio.run(go())
+    assert seen == ["start"]

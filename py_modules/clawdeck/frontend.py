@@ -8,18 +8,23 @@ without ClawDeck's launch wrapper on that shortcut no MangoHud log, so Autotune 
 at the pick. Two things fix that:
   - ES-DE's custom event scripts ("Enable custom event scripts", ~/ES-DE/scripts/<event>/, run blocking, in name order)
     start ClawDeck's script on game-start and game-end with the ROM path, game name, system name and system full name.
-    It writes them to EVENT_FILE; the plugin reads that while the frontend runs (main.py), and each ROM is a game of
-    its own under the key "<frontend appid>#<system>/<ROM file name>";
+    It writes them to EVENT_FILE; while a game runs the plugin watches that file with inotify (Watch: no timer, it
+    wakes only when the script writes, CONTRIBUTING's battery-first rule), and each ROM is a game of its own under the
+    key "<frontend appid>#<system>/<ROM file name>";
   - ClawDeck's launch wrapper on the frontend's shortcut: its MangoHud settings are inherited by every emulator the
     frontend starts, so each one writes a frame-time log (Vulkan emulators through the host layer, Flatpak RetroArch
     through org.freedesktop.Platform.VulkanLayer.MangoHud). ES-DE draws with OpenGL, so its menus write none.
 """
 from __future__ import annotations
 
+import asyncio
+import ctypes
+import ctypes.util
 import glob
 import os
 import re
 import subprocess
+from typing import Callable
 
 from . import shortcuts
 
@@ -42,8 +47,43 @@ def event_path(home: str) -> str:
     return os.path.join(home, EVENT_FILE)
 
 
+class Watch:
+    """inotify on EVENT_FILE's folder: `on_event` runs in the event loop whenever the script has written the file
+    (it is renamed into place, IN_MOVED_TO). close() ends it. Raises OSError where inotify isn't there."""
+    IN_CLOSE_WRITE, IN_MOVED_TO = 0x00000008, 0x00000080
+
+    def __init__(self, home: str, on_event: Callable[[], None]):
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        if not hasattr(libc, "inotify_init1"):
+            raise OSError("no inotify here")
+        self.fd = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+        if self.fd < 0:
+            raise OSError(ctypes.get_errno(), "inotify_init1")
+        folder = os.path.dirname(event_path(home))
+        if libc.inotify_add_watch(self.fd, folder.encode(), self.IN_CLOSE_WRITE | self.IN_MOVED_TO) < 0:
+            err = ctypes.get_errno()
+            os.close(self.fd)
+            raise OSError(err, f"inotify on {folder}")
+        self.loop, self.on_event = asyncio.get_event_loop(), on_event
+        self.loop.add_reader(self.fd, self._ready)
+
+    def _ready(self) -> None:
+        try:
+            data = os.read(self.fd, 4096)                # every event in the folder: only ours counts
+        except OSError:
+            return
+        if os.path.basename(EVENT_FILE).encode() + b"\x00" in data:
+            self.on_event()
+
+    def close(self) -> None:
+        try:
+            self.loop.remove_reader(self.fd)
+        finally:
+            os.close(self.fd)
+
+
 def stamp(home: str) -> int | None:
-    """When the frontend last wrote an event (ns), or None: one stat, cheap enough for every second of a game."""
+    """When the frontend last wrote an event (ns), or None."""
     try:
         return os.stat(event_path(home)).st_mtime_ns
     except OSError:

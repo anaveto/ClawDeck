@@ -947,7 +947,7 @@ def plugin(fake_hw, tmp_path, monkeypatch):
     p.settings = {"autotune": True, "autotune_plugged": True}
     p._save_settings = lambda: None
     p.running_appid, p.running_plugged, p._holding_pick = None, None, False
-    p.running_key, p.running_title, p._frontend_task, p._frontend_seen = None, None, None, None
+    p.running_key, p.running_title, p._frontend_watch, p._frontend_seen = None, None, None, None
     p.guard = thermal.Guard(None, None)
     p._guard_task = None
 

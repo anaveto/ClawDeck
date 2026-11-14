@@ -43,7 +43,6 @@ SETTINGS_DIR = decky.DECKY_PLUGIN_SETTINGS_DIR
 RUNTIME_DIR = decky.DECKY_PLUGIN_RUNTIME_DIR
 LOG_DIR = decky.DECKY_PLUGIN_LOG_DIR
 HOME = decky.DECKY_USER_HOME
-FRONTEND_POLL_S = 1.0     # how often a running game's frontend events are looked for (frontend.py)
 DESKTOP = os.path.join(HOME, "Desktop")
 VERSIONS = os.path.join(PLUGIN_DIR, "assets", "versions.json")
 GAMES = os.path.join(PLUGIN_DIR, "assets", "games.json")
@@ -117,7 +116,7 @@ class Plugin:
         # it started (frontend.py), with that game's name for the panel
         self.running_key: str | None = None
         self.running_title: str | None = None
-        self._frontend_task = None
+        self._frontend_watch = None
         self._frontend_seen: int | None = None
         self._health: tuple[float, list] | None = None
         # is a Bazzite update waiting (kernel, Intel graphics driver, Mesa, gamescope)? Once per start, off the event loop
@@ -198,6 +197,8 @@ class Plugin:
     async def _unload(self):
         if getattr(self, "_thermal_log_task", None):
             self._thermal_log_task.cancel()
+        if getattr(self, "_frontend_watch", None):
+            self._watch_frontend(False)
         self.autotune.stop()
         quiet.background(False)
         n = self.power.revert_all()
@@ -869,28 +870,35 @@ class Plugin:
             plugged = bool(self.battery.plugged())
             self.running_appid, self.running_plugged = appid, plugged
             self.running_key, self.running_title = appid, None
-            self._watch_frontend(appid)
+            self._watch_frontend(True)
             self._holding_pick = False
             self._autotune_late = False
             self.power.revert_all(keep_thermald=True)   # the game starts from what was there before ClawDeck + its pick
             return self._start_game_power(appid, plugged)
 
     # ---- emulator frontends (frontend.py) ----------------------------------------------------------------------------
-    def _watch_frontend(self, appid: str) -> None:
-        """While a game runs: did an emulator frontend (ES-DE) start or end one of its games? One stat a second; an
-        event written before this game started doesn't count."""
-        if self._frontend_task and not self._frontend_task.done():
-            self._frontend_task.cancel()
+    def _watch_frontend(self, on: bool) -> None:
+        """While a game runs: did an emulator frontend (ES-DE) start or end one of its games? inotify, no timer
+        (frontend.Watch); an event written before this game started doesn't count."""
+        if self._frontend_watch is not None:
+            self._frontend_watch.close()
+            self._frontend_watch = None
+        if not on:
+            return
         self._frontend_seen = frontend.stamp(HOME)
-        self._frontend_task = asyncio.get_event_loop().create_task(self._frontend_loop(appid))
+        try:
+            self._frontend_watch = frontend.Watch(HOME, self._frontend_event)
+        except (OSError, AttributeError) as e:
+            decky.logger.info("frontend: no watch (%s): games started from ES-DE share its power", e)
 
-    async def _frontend_loop(self, appid: str) -> None:
-        while self.running_appid == appid:
-            await asyncio.sleep(FRONTEND_POLL_S)
-            try:
-                await self._frontend_poll()
-            except Exception as e:                        # never let a torn file end the watch for this game
-                decky.logger.warning("frontend: %s", e)
+    def _frontend_event(self) -> None:
+        asyncio.get_event_loop().create_task(self._frontend_safe())
+
+    async def _frontend_safe(self) -> None:
+        try:
+            await self._frontend_poll()
+        except Exception as e:                            # a torn file must not end the watch for this game
+            decky.logger.warning("frontend: %s", e)
 
     async def _frontend_poll(self) -> dict | None:
         """A new frontend event: the game it started is the running game for power and Autotune from now on (what the
@@ -924,6 +932,7 @@ class Plugin:
             learned = self._save_learned(self._game_key(), plugged)
             self.running_appid, self.running_plugged = None, None
             self.running_key, self.running_title = None, None
+            self._watch_frontend(False)
             # everything the game and autotune changed goes back, then the limit you picked for the power source the
             # Claw is on now, not the firmware's boot limits (maintainer, 2026-11-04: "doesn't reset back to what it
             # was set to")
