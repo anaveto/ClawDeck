@@ -68,9 +68,9 @@ appears in `~/homebrew/data/ClawDeck/mangohud/`, and the status line shows fps.
 **Autotune target holds your target with the fewest watts (2026-11-12, reworked 2026-11-14):** target mode started
 mid-range (22 W of a 35 W pick), never went above the pick, lowered at 97 % of the target (and not at all in a
 power-bound game), and Auto FPS replaced an out-of-reach target with what the full TDP gave (120 → 46 fps in
-Enshrouded). Now it holds the target, or the game's own lock under it, with the fewest watts, judged on 3 s averages
-(a 30 fps lock reads 28.6-30.4 second by second): more than 5 % under (57 fps for 60) gets watts at once, aimed 10 %
-over the target; watts come off only while the lowest average is 20 % over (64 fps counted as room for 60 and
+Enshrouded). Now it holds the target, or the game's own lock under it, with the fewest watts, judged on averages (a
+30 fps lock reads 28.6-30.4 second by second): a 2 s average and the last second more than 5 % under (57 fps for 60)
+get watts at once, aimed 10 % over the target; watts come off only while the lowest average is 20 % over (64 fps counted as room for 60 and
 Enshrouded was cut six times in 8 minutes), or 1 W at a time while a frame limit or lock holds the target with the GPU
 not maxed. A step down that ends under goes straight back, and nothing goes under that TDP for 10 minutes; there is
 no floor (a 30 fps lock's own dips at 30 W had made 30 W one). A game steady under the target at the maximum with the
