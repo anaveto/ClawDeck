@@ -56,7 +56,7 @@ sleep/wake several times fine.
 mid-range (22 W of a 35 W pick), never went above the pick, lowered at 97 % of the target (and not at all in a
 power-bound game), and Auto FPS replaced an out-of-reach target with what the full TDP gave (120 → 46 fps in
 Enshrouded). Now it holds the target, or the game's own lock under it, with the fewest watts, judged on 3 s averages
-(a 30 fps lock reads 28.6-30.4 second by second): more than one frame a second under gets watts at once, aimed 10 %
+(a 30 fps lock reads 28.6-30.4 second by second): more than 5 % under (57 fps for 60) gets watts at once, aimed 10 %
 over the target; watts come off only while the lowest average is 20 % over (64 fps counted as room for 60 and
 Enshrouded was cut six times in 8 minutes), or 1 W at a time while a frame limit or lock holds the target with the GPU
 not maxed. A step down that ends under goes straight back, and nothing goes under that TDP for 10 minutes; there is

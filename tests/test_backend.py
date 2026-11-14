@@ -1514,12 +1514,14 @@ def test_target_holds_the_target_with_the_fewest_watts(fake_hw, monkeypatch):
     run(300)
     assert s.learned.tdp == 17 and s.phase == "target"          # 68 fps at 17 W: no more 20 % over
     assert min(run.seen["fps"]) >= 60 and at.status()["saves_w"] == 8
-    game.per_w = 3.5                                             # heavier: 59.5 fps at 17 W, one frame under at most
+    game.per_w = 3.4                                             # heavier: 57.8 fps at 17 W, under 5 % short
     run(60)
     assert s.learned.tdp == 17
     game.per_w = 2.9                                             # 49 fps at 17 W: under
-    run(4)
-    assert s.learned.tdp == 23 and "under 60" in s.last_action   # at once, to what gives 66
+    run(2)
+    assert s.learned.tdp == 19 and "back to 19 W" in s.last_action   # at once: 17 W came from a step down
+    run(6)
+    assert s.learned.tdp == 23 and "under 60" in s.last_action   # 55 at 19 W: to what gives 66
     at.session = None
 
 def test_target_with_a_frame_limit_at_the_target_lowers_while_the_gpu_has_headroom(fake_hw, monkeypatch):
@@ -1541,7 +1543,7 @@ def test_target_a_step_down_that_misses_goes_back_and_waits_before_trying_again(
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
     _Game(at, lambda tdp, *_: 66.0 if tdp >= 18 else 50.0, gpu_busy=50)   # held at 66 from 18 W, 50 under it
     run(100)
-    assert s.learned.tdp == 18 and "back to 18 W" in s.last_action
+    assert s.learned.tdp == 18 and "back to 18 W for 10 min" in s.last_action
     run(autotune.G_HOLD_S - 120)
     assert 17 not in run.seen["tdp"][100:]                       # not again within the wait
     run(240)
@@ -1574,12 +1576,12 @@ def test_target_holds_a_games_own_frame_cap_with_the_fewest_watts(fake_hw, monke
         t += 1
     assert s.learned.cap == 30 and t <= 11 and "own cap" in s.last_action   # found at the full TDP in seconds
     run(400)
-    assert s.learned.tdp == 10 and min(run.seen["fps"][30:]) >= 30 - autotune.G_TOL_FPS   # held with 10 W
+    assert s.learned.tdp == 10 and min(run.seen["fps"][30:]) >= 30 * (1 - autotune.G_TOL)   # held with 10 W
     at.session = None
 
 def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, monkeypatch):
     """Midnight Club LA (RPCS3, locked at 30, target 60, 2026-11-14): 29.9-30.2 fps with one 28.6 fps second every
-    13 s, at any TDP. Their 3 s averages stay within a frame of 30, so the watts come down to what holds 30. A real
+    13 s, at any TDP. Their 3 s averages stay within 5 % of 30, so the watts come down to what holds 30. A real
     shortage still gets watts back."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     game = _BusyGame(at, 3.0, cap=30.0, busy_capped=40)          # 10 W holds 30
@@ -1602,12 +1604,32 @@ def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, mo
     assert s.learned.tdp >= 15 and "under 30" in s.last_action
     run(30)
     last = run.seen["fps"][-20:]
-    assert min(sum(last[i:i + 3]) / 3 for i in range(18)) >= 30 - autotune.G_TOL_FPS   # 30 again, its own dips aside
+    assert min(sum(last[i:i + 3]) / 3 for i in range(18)) >= 30 * (1 - autotune.G_TOL)   # 30 again, its own dips aside
     at.session = None
 
+def test_target_a_late_under_after_a_step_down_also_goes_back_and_waits(fake_hw, monkeypatch):
+    """Midnight Club LA, 2026-11-14 13:41: stepped from 28 to 27 W, 75 s later an under, 28 W back as a plain raise, and
+    12 s later 27 W again, over and over. An under at a TDP a step down brought it to goes back and waits, whenever it
+    comes."""
+    at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=28)
+    late = {"at": None}
+
+    def fps(tdp, *_):
+        if tdp >= 28:
+            return 30.0
+        late["at"] = late["at"] or autotune.time.monotonic()
+        return 30.0 if autotune.time.monotonic() - late["at"] < 75 else 27.0   # 27 W holds for 75 s, then not
+    _Game(at, fps, gpu_busy=40)
+    run(200)
+    assert s.learned.tdp == 28 and "back to 28 W for 10 min" in s.last_action
+    run(autotune.G_HOLD_S - 120)
+    assert run.seen["tdp"][-(autotune.G_HOLD_S - 120):].count(27) == 0   # no flip-flop
+    at.session = None
+
+
 def test_target_a_game_steady_just_under_the_target_is_not_a_frame_cap(fake_hw, monkeypatch):
-    """Enshrouded at the full TDP, steady at 59 fps for a 60 target with the GPU busy under 85 % (2026-11-14): within a
-    frame of the target, that holds it; it isn't a lock under it. The GPU isn't maxed, so watts come off while 59 holds."""
+    """Enshrouded at the full TDP, steady at 59 fps for a 60 target with the GPU busy under 85 % (2026-11-14): within
+    5 % of the target, that holds it; it isn't a lock under it. The GPU isn't maxed, so watts come off while 59 holds."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     _BusyGame(at, 3.0, cap=59.0, busy_capped=80)                  # held at 59 fps by the game, GPU 80 % busy
     run(400)
@@ -1748,8 +1770,8 @@ def test_target_raises_at_once_however_low_the_fps(fake_hw, monkeypatch):
 
 def test_target_one_slow_or_fast_second_is_no_trend(fake_hw, monkeypatch):
     """3 s averages decide, not single seconds: a game alternating 62 and 70 fps (66 on average) holds 60 without being
-    20 % over, so nothing changes; dips to 58 every other second still average over 59; a drop that averages 44 gets
-    watts at once."""
+    20 % over, so nothing changes; 54 and 62 still average over 57 (5 % under); a drop that averages 44 gets watts at
+    once."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
     s.max_tdp = 35
     beat = {"n": 0, "dip": 0.0}
@@ -1760,7 +1782,7 @@ def test_target_one_slow_or_fast_second_is_no_trend(fake_hw, monkeypatch):
     _Game(at, fps, gpu_busy=99)                                  # power-bound: no frame limit holds it
     run(120)
     assert s.learned.tdp == 20
-    beat["dip"] = 4.0                                            # 58 / 66
+    beat["dip"] = 6.0                                            # 56 / 64: 58.7 or 61.3 on average
     run(60)
     assert s.learned.tdp == 20
     beat["dip"] = 22.0                                           # 40 / 48
