@@ -363,6 +363,11 @@ class Plugin:
                 r["wrapper"] = WRAPPER                   # the UI puts it in ES-DE's launch options (Steam's own call)
                 r["next"] = "ES-DE set up: from its next start, each game in it gets its own power and Autotune"
             return r
+        if fix == "esde_per_game_off":
+            r = await self._bg(frontend.esde_remove, HOME)
+            if r.get("ok"):
+                r["next"] = "ES-DE: one limit for all its games again, from its next start"
+            return r
         if fix in ("fix_face_buttons", "undo_face_buttons", "quiet_split_lock_log", "undo_quiet_split_lock_log"):
             undo = fix.startswith("undo_")
             key = "face_buttons" if "face" in fix else "quiet_log"
@@ -401,7 +406,8 @@ class Plugin:
         return {"vrr": vrr, "buttons": buttons.status(self.hw.model_id), "health": health.summary(checks),
                 "gyro": await self._bg(gyro.status, self.hw.model_id),
                 "overlay_power": {**telemetry.status(), "battery_w": telemetry.battery_watts()},
-                "quiet_log": {**quietlog.status(), "per_minute": await self._bg(quietlog.flood_rate)}}
+                "quiet_log": {**quietlog.status(), "per_minute": await self._bg(quietlog.flood_rate)},
+                "esde": await self._bg(frontend.esde_status, HOME)}
 
     async def ui_log(self, msg: str) -> None:
         """A line from the panel (VRR switching), so it shows in ClawDeck's log next to the backend's."""

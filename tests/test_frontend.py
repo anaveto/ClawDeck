@@ -84,6 +84,16 @@ def test_es_de_is_set_up_with_the_wrapper_in_its_shortcut(tmp_path, monkeypatch)
     assert not frontend.esde_status(str(tmp_path / "nobody"))["present"]
 
 
+def test_es_de_per_game_comes_out_again(tmp_path, monkeypatch):
+    """Remove takes out ClawDeck's scripts only: ES-DE's setting and the launch wrapper stay."""
+    monkeypatch.setattr(frontend, "_esde_running", lambda: False)
+    home = _home(tmp_path, opts="/home/u/.local/share/clawdeck/clawdeck-launch.sh %command%")
+    frontend.esde_install(home)
+    r = frontend.esde_remove(home)
+    assert r["ok"] and not r["scripts"] and r["setting"] and r["wrapper"] and not frontend.esde_status(home)["ok"]
+    assert frontend.esde_remove(home)["ok"]                      # nothing left to remove is fine
+
+
 def test_a_torn_or_foreign_event_file_is_no_event(tmp_path):
     home = str(tmp_path)
     assert frontend.read(home) is None and frontend.stamp(home) is None

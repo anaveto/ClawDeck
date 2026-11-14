@@ -130,6 +130,21 @@ export const FixesTab: FC<{ quick?: boolean }> = ({ quick }) => {
           </ButtonItem>
         </PanelSectionRow>
       )}
+      {f?.esde?.present && (
+        <PanelSectionRow>
+          <Group title="ES-DE" />
+          <Status ok={f.esde.ok ? true : null}
+            label={f.esde.ok ? "ES-DE: each game its own power" : "ES-DE: one limit for all its games"}
+            detail={f.esde.ok ? "power picks and Autotune per ROM" : f.esde.scripts && !f.esde.setting ? "its custom event scripts setting is off"
+              : f.esde.scripts && !f.esde.wrapper ? "no launch wrapper on its shortcut, so no frame rate" : "Steam only sees ES-DE"} />
+          <ButtonItem layout="below" disabled={busy} onClick={() => fix(f.esde!.ok ? "esde_per_game_off" : "esde_per_game")}
+            description={explain(f.esde.ok ? "Takes ClawDeck's game-start/end scripts out of ES-DE. Its launch wrapper stays, so Autotune still reads ES-DE's frame rate."
+              : "Steam only sees ES-DE, so every game in it shares one limit. ClawDeck adds a game-start/end script to ES-DE and turns its custom event scripts on, so each game gets its own power and Autotune, starting from where its system's last game settled. It also puts ClawDeck's launch wrapper on ES-DE's shortcut, so every emulator writes the frame times Autotune reads.",
+              undefined, f.esde.ok ? "none; from ES-DE's next start." : "close ES-DE first: it writes its settings when it quits.")}>
+            {f.esde.ok ? "Remove ES-DE per game" : f.esde.scripts ? "Finish ES-DE per game" : "Set up ES-DE per game"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       <PanelSectionRow>
         <Group title="Health check" />
         <Status ok={f ? f.health.ok : null} label={f ? `Health: ${f.health.line}` : "Health: checking…"} detail={f ? `${f.health.total - f.health.problems} of ${f.health.total} checks pass` : undefined} />

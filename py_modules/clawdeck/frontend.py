@@ -203,3 +203,18 @@ def esde_install(home: str, uid: int | None = None, gid: int | None = None) -> d
         if uid is not None:
             os.chown(settings, uid, gid if gid is not None else -1)
     return {**esde_status(home), "ok": True}
+
+
+def esde_remove(home: str) -> dict:
+    """Take ClawDeck's scripts out of ES-DE. Its custom-event-scripts setting stays on: other scripts may use it, and
+    with none in place it does nothing. The launch wrapper stays on ES-DE's shortcut: Autotune still reads the
+    frame rate through it, for ES-DE as one game."""
+    root = os.path.join(home, ESDE_DIR)
+    for ev in ESDE_EVENTS:
+        try:
+            os.remove(os.path.join(root, "scripts", ev, ESDE_SCRIPT_NAME))
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            return {"ok": False, "error": f"{ev}: {e.strerror}"}
+    return {**esde_status(home), "ok": True}

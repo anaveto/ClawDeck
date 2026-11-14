@@ -133,7 +133,9 @@ export type OverlayPower = { available: boolean; on: boolean; files: { path: str
 export type QuietLog = { applies: boolean; installed: boolean; per_minute: number | null };
 export type GyroState = { applies: boolean; state?: "off" | "restart" | "partial" | "on"; line?: string; installed?: boolean; supported?: boolean;
   firmware_ok?: boolean; kernel_arg?: boolean; hub?: boolean; gyro_iio?: boolean; inputplumber_imu?: boolean; services?: Record<string, string>; accel?: boolean };
-export type Fixes = { vrr: WideVrr; buttons: ButtonsState; gyro?: GyroState; health: { ok: boolean; total: number; problems: number; line: string }; overlay_power: OverlayPower; quiet_log?: QuietLog };
+// ES-DE per game (frontend.py): its scripts, its custom-event-scripts setting, the launch wrapper on its shortcut
+export type EsdeState = { present: boolean; scripts: boolean; setting: boolean | null; wrapper: boolean; appid: string | null; ok: boolean };
+export type Fixes = { vrr: WideVrr; buttons: ButtonsState; gyro?: GyroState; health: { ok: boolean; total: number; problems: number; line: string }; overlay_power: OverlayPower; quiet_log?: QuietLog; esde?: EsdeState };
 export const getFixes = callable<[], Fixes>("get_fixes");
 export const uiLog = callable<[msg: string], void>("ui_log");
 export const displayExternal = callable<[], { connected: boolean; connectors: string[] }>("display_external");
