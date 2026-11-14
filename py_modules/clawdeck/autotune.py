@@ -37,7 +37,10 @@ with the fewest watts that can (user, 2026-11-14), judged every second on render
 averages: a locked game's own pacing reads 28.6-30.4 fps for a 30 fps lock second by second (Midnight Club LA):
   - under: the last G_UNDER_S s average and the last second both more than G_TOL (5 %) under the target (user: "3
     seconds is a long time to wait"; DeckyTDPTuner's 4 ticks of 0.5 s). Watts at once, aimed at G_AIM over the target
-    with frames following watts, at least +G_RAISE W (+G_RAISE_BIG far under), up to the model's maximum in one step;
+    with frames following watts, at least +G_RAISE W (+G_RAISE_BIG far under), up to the model's maximum in one step.
+    Only while the chip runs at the limit (package at G_AT_LIMIT of the TDP or more): frames lost well under it are not
+    the limit's, and more of it can't bring them back (Midnight Club 3 on PCSX2 read 24 fps for a second at 26 W while
+    the chip drew 10.7 W, and that sent it back to 27 W for 10 minutes);
   - well over: the lowest G_WIN s average of the last G_LOWER_AFTER s at G_OVER (20 %) over the target or more. Down to
     the watts aimed at G_AIM over it, at most G_STEP_MAX W a step (user: "shouldn't lower unless 20% over");
   - at the target with the GPU not maxed (PowerStation busy under G_BUSY): a frame limit or a lock holds the fps there,
@@ -104,6 +107,9 @@ SETTLED_WINDOWS = 3     # windows without a change in hold = learned: the firmwa
 G_WIN = 3               # seconds an average is taken over: one slow or fast second is no trend
 G_UNDER_S = 2           # an under: this many seconds' average and the last second under the target (a dip that is over
                         # by the second second is no under)
+G_AT_LIMIT = 0.85       # package power at this share of the TDP or more: the limit holds the chip. At the limit the
+                        # package reads 96-100 % of it (Midnight Club LA at 13, 14 and 30 W); PCSX2 at 30 fps drew 10-12 W
+                        # of 26-30 W
 G_TOL = 0.05            # an average this far under the target still holds it: 57 fps for 60, 28.5 for a 30 fps lock
                         # (user, 2026-11-14: "at 60fps that's only 3fps, which is insignificant"; one frame a second
                         # was too sensitive, and 1-3 % was less than a frame at 30 fps)
@@ -395,6 +401,7 @@ class Session:
     g_steady: int = 0                   # readings in a row at g_steady_tdp, at the target and without a miss
     g_steady_tdp: int | None = None
     g_hist: list[float] = field(default_factory=list)
+    g_pkg: list = field(default_factory=list)       # package W of the last G_UNDER_S readings (None: not read)
     g_cap_hist: list[float] = field(default_factory=list)   # the last G_CAP_S seconds, whatever changed
     g_at_top: int = 0                                       # seconds in a row at the full TDP
     g_cap_at: float = 0.0                                   # when the cap was found or last checked
@@ -749,6 +756,8 @@ class Autotune:
         # 11-28 fps for 40 s (Order of the Sinking Star, target 120, 2026-11-12)
         s.g_hist.append(fps)
         del s.g_hist[:-G_LOWER_AFTER]                     # since the last change, at most G_LOWER_AFTER s
+        s.g_pkg.append(smp.pkg_w)
+        del s.g_pkg[:-G_UNDER_S]
         recent = s.g_hist[-G_WIN:]
         win = sum(recent) / len(recent)
         s.avg_fps, s.low_fps = win, min(recent)
@@ -759,6 +768,9 @@ class Autotune:
         under = sum(short) / len(short)
         if len(short) >= G_UNDER_S and under < T * (1 - G_TOL) and fps < T * (1 - G_TOL):  # fresh since the last change
             s.g_last_miss, s.g_steady = now, 0
+            pkg = [p for p in s.g_pkg if p]
+            if pkg and max(pkg) < l.tdp * G_AT_LIMIT:
+                return                                    # the chip ran well under the limit: not the limit's frames
             if s.g_last_drop is not None:
                 # the step down took too much: straight back, and nothing under that TDP for G_HOLD_S
                 w, was = s.g_drop_from, l.tdp
