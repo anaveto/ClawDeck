@@ -1790,6 +1790,29 @@ def test_target_one_slow_or_fast_second_is_no_trend(fake_hw, monkeypatch):
     assert s.learned.tdp > 20 and "under 60" in s.last_action
     at.session = None
 
+def test_target_two_seconds_under_get_watts(fake_hw, monkeypatch):
+    """An under is the last G_UNDER_S (2) s average and the last second more than 5 % under (user: "3 seconds is a
+    long time to wait"): 56 fps for 60 gets watts after 2 s, where a 3 s average took 3. A slow first second at the
+    new watts that is back by the next one is no under."""
+    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
+    s.max_tdp = 35
+    now = {"fps": 64.0, "next": []}
+
+    def fps(*_):
+        return now["next"].pop(0) if now["next"] else now["fps"]
+    _Game(at, fps, gpu_busy=99)                                  # power-bound, 64 is not 20 % over: it holds
+    run(30)
+    assert s.learned.tdp == 20
+    now["fps"] = 56.0
+    run(2)
+    assert s.learned.tdp > 20 and "56 fps, under 60: raised" in s.last_action
+    raised = s.learned.tdp
+    now["fps"], now["next"] = 64.0, [48.0]
+    run(5)
+    assert s.learned.tdp == raised
+    at.session = None
+
+
 def test_target_saves_the_tdp_that_held_not_a_quit_menus(fake_hw, monkeypatch):
     """A TDP holds the target after G_SETTLE_S readings in a row at it; a 400 fps quit menu that lowers it after
     that doesn't change what is saved."""

@@ -35,8 +35,9 @@ energy counter. The log directory listing and PowerStation's GPU load are cached
 Target fps (optional, Power -> Autotune target): hold the fps you picked, or the game's own lock when that is lower,
 with the fewest watts that can (user, 2026-11-14), judged every second on rendered (base) frames, always on G_WIN s
 averages: a locked game's own pacing reads 28.6-30.4 fps for a 30 fps lock second by second (Midnight Club LA):
-  - under: an average more than G_TOL (5 %) under the target. Watts at once, aimed at G_AIM over the target with frames
-    following watts, at least +G_RAISE W (+G_RAISE_BIG far under), up to the model's maximum in one step;
+  - under: the last G_UNDER_S s average and the last second both more than G_TOL (5 %) under the target (user: "3
+    seconds is a long time to wait"; DeckyTDPTuner's 4 ticks of 0.5 s). Watts at once, aimed at G_AIM over the target
+    with frames following watts, at least +G_RAISE W (+G_RAISE_BIG far under), up to the model's maximum in one step;
   - well over: the lowest G_WIN s average of the last G_LOWER_AFTER s at G_OVER (20 %) over the target or more. Down to
     the watts aimed at G_AIM over it, at most G_STEP_MAX W a step (user: "shouldn't lower unless 20% over");
   - at the target with the GPU not maxed (PowerStation busy under G_BUSY): a frame limit or a lock holds the fps there,
@@ -101,6 +102,8 @@ LEARN_TAU_US = 8_000_000  # PL1 time window while learning: shorter than WINDOW_
 SETTLED_WINDOWS = 3     # windows without a change in hold = learned: the firmware's PL1 window comes back
 # target fps (see above)
 G_WIN = 3               # seconds an average is taken over: one slow or fast second is no trend
+G_UNDER_S = 2           # an under: this many seconds' average and the last second under the target (a dip that is over
+                        # by the second second is no under)
 G_TOL = 0.05            # an average this far under the target still holds it: 57 fps for 60, 28.5 for a 30 fps lock
                         # (user, 2026-11-14: "at 60fps that's only 3fps, which is insignificant"; one frame a second
                         # was too sensitive, and 1-3 % was less than a frame at 30 fps)
@@ -699,7 +702,9 @@ class Autotune:
         if smp.pkg_w:
             s.fps_per_w = fps / smp.pkg_w
         top = self._top(s)
-        if len(recent) >= G_WIN and win < T * (1 - G_TOL):  # G_WIN fresh seconds since the last change
+        short = s.g_hist[-G_UNDER_S:]
+        under = sum(short) / len(short)
+        if len(short) >= G_UNDER_S and under < T * (1 - G_TOL) and fps < T * (1 - G_TOL):  # fresh since the last change
             s.g_last_miss, s.g_steady = now, 0
             if s.g_last_drop is not None:
                 # the step down took too much: straight back, and nothing under that TDP for G_HOLD_S
@@ -707,20 +712,20 @@ class Autotune:
                 s.g_hold_tdp, s.g_hold_until, s.g_last_drop = w, now + G_HOLD_S, None
                 if self._tdp(l, w):
                     s.g_last_change, s.g_hist = now, []
-                    self._did(s, f"{win:.0f} fps at {was} W, under {T:.0f}: back to {w} W for {G_HOLD_S // 60} min",
+                    self._did(s, f"{under:.0f} fps at {was} W, under {T:.0f}: back to {w} W for {G_HOLD_S // 60} min",
                               f"+{w - was} W")
                 return
             if l.tdp >= top:
                 if not cap:
-                    self._out_of_reach(s, win, now)
+                    self._out_of_reach(s, under, now)
                 return
             # watts roughly follow frames: aimed at G_AIM over the target, at least +2 W (+4 W far under), up to the
             # maximum in one step. No cap: an overshoot costs a few seconds of watts, a short step costs frames
-            want = -(-int(l.tdp * T * (1 + G_AIM) / max(win, 1.0) * 10) // 10)
-            w, was = min(top, max(want, l.tdp + (G_RAISE_BIG if win < T * 0.75 else G_RAISE))), l.tdp
+            want = -(-int(l.tdp * T * (1 + G_AIM) / max(under, 1.0) * 10) // 10)
+            w, was = min(top, max(want, l.tdp + (G_RAISE_BIG if under < T * 0.75 else G_RAISE))), l.tdp
             if self._tdp(l, w):
                 s.g_last_change, s.g_hist = now, []
-                self._did(s, f"{win:.0f} fps, under {T:.0f}: raised TDP to {w} W", f"+{w - was} W")
+                self._did(s, f"{under:.0f} fps, under {T:.0f}: raised TDP to {w} W", f"+{w - was} W")
             return
         s.g_maxed_since, s.unreachable = None, False
         # a TDP holds the target once G_SETTLE_S readings in a row at it held it. It used to be a minute on the clock,
