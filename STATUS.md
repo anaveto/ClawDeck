@@ -60,15 +60,15 @@ fps lock reads 28.6-30.4 second by second): a 2 s average and the last second mo
 watts at once, aimed 10 % over the target, but only while the chip runs at the limit (package at 85 % of the TDP or
 more: frames lost well under it aren't the limit's); watts come off only while the lowest average is 20 % over (64 fps
 counted as room for 60 and Enshrouded was cut six times in 8 minutes), or in steps of 1, 2, 4, then 6 W (1 W near the
-edge) while a frame limit or lock holds the target with the GPU not maxed (straight to just over what the chip draws
-while it stays well under the TDP). A step down that ends under goes straight back; after a 1 W step nothing goes under
-that TDP for 1 minute, doubling for each further under there up to 10 minutes; there is no floor (a 30 fps lock's own
-dips at 30 W had made 30 W one). A game steady under the target at the maximum, or with the chip well under the TDP,
-with the GPU not maxed runs at its own lock (a PS3 game at 30 for a 60 target): found after 10 s, saved per game, lifted
-at 20 % over it, checked every 20 minutes at the maximum. It starts at the game's TDP and saves the TDP that held the
-target for 60 readings as the game's own. Auto FPS is gone. Check on the EX: start a game at 8 W (it climbs) and at 35 W
-(it comes down, never under the target); Enshrouded at 60 keeps its watts; a 30 fps-locked game settles well under 35 W
-at 30 fps, and its next start begins there.
+edge; after raises, straight back to where it held before) while a frame limit or lock holds the target with the GPU not
+maxed (straight to just over what the chip draws while it stays well under the TDP). A step down that ends under goes
+straight back; after a 1 W step nothing goes under that TDP for 1 minute, doubling for each further under there up to 10
+minutes; there is no floor (a 30 fps lock's own dips at 30 W had made 30 W one). A game steady under the target at the
+maximum, or with the chip well under the TDP, with the GPU not maxed runs at its own lock (a PS3 game at 30 for a 60
+target): found after 10 s, saved per game, lifted at 20 % over it, checked every 20 minutes at the maximum. It starts at
+the game's TDP and saves the TDP that held the target for 60 readings as the game's own. Auto FPS is gone. Check on the
+EX: start a game at 8 W (it climbs) and at 35 W (it comes down, never under the target); Enshrouded at 60 keeps its
+watts; a 30 fps-locked game settles well under 35 W at 30 fps, and its next start begins there.
 
 **XeSS XMX package 20261111 (2026-11-10):** pinned without waiting (maintainer's word for HHHHanasak1's releases).
 New on the EX (Xe3): install.sh's default is "stock mode", the package's unpatched Mesa 26.3 plus its Vulkan layer,

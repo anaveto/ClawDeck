@@ -1871,6 +1871,34 @@ def test_target_a_lock_with_the_chip_well_under_the_limit(fake_hw, monkeypatch):
     at.session = None
 
 
+def test_target_after_a_dip_more_watts_didnt_fix_it_goes_straight_back(fake_hw, monkeypatch):
+    """Midnight Club LA, 2026-11-14 17:47: 30 fps at 11 W, then a few seconds at 13-22 fps that 17, 22, 26 and 30 W
+    didn't fix; after it the way down from 30 W kept meeting the game's own dips and stayed at 23-30 W for minutes. The
+    first step down after raises goes straight back to the TDP before them. A heavier scene that needs the watts sends
+    it back up at once, and then it comes down step by step."""
+    at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=11)
+    s.max_tdp = 30
+    scene = {"dip": False, "needs": 11}
+    _Game(at, lambda tdp, *_: 15.0 if scene["dip"] else (30.0 if tdp >= scene["needs"] else 26.0), gpu_busy=50)
+    run(5)
+    assert s.learned.tdp == 11
+    scene["dip"] = True                                          # 8 s that no TDP fixes
+    run(8)
+    raised = s.learned.tdp
+    assert raised >= 20
+    scene["dip"] = False
+    run(autotune.G_LOWER_AFTER + 2)
+    assert s.learned.tdp == 11 and "where it held before" in s.last_action   # one step, not 1-2-4-6 W from the top
+    scene["needs"] = 20                                          # now a heavier scene: 11 W is too little
+    run(4)
+    assert s.learned.tdp == raised and "back to" in s.last_action
+    run(50)
+    assert s.learned.tdp <= 23                                   # a fresh way down (1, 2, 4 W), not 1 W at a time
+    run(100)
+    assert 20 <= s.learned.tdp < raised                          # down to what it needs
+    at.session = None
+
+
 def test_target_saves_the_tdp_that_held_not_a_quit_menus(fake_hw, monkeypatch):
     """A TDP holds the target after G_SETTLE_S readings in a row at it; a 400 fps quit menu that lowers it after
     that doesn't change what is saved."""

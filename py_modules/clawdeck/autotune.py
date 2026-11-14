@@ -46,7 +46,8 @@ averages: a locked game's own pacing reads 28.6-30.4 fps for a 30 fps lock secon
   - at the target with the GPU not maxed (PowerStation busy under G_BUSY): a frame limit or a lock holds the fps there,
     so the fps can't show spare watts. Every G_LOWER_AFTER s while the target holds, a step of 1, 2, 4, then G_STEP_MAX
     W on a fresh way down (after the start, a raise or a found lock; 1 W at a time took 3.5 minutes from 30 to 12 W in
-    Midnight Club LA), 1 W once a step ended under; with the chip well under the TDP the whole time, at least to just
+    Midnight Club LA), 1 W once a step ended under; after a run of raises the first step goes straight back to the TDP
+    before them (a dip that more watts didn't fix kept that game 15-19 W higher for minutes); with the chip well under the TDP the whole time, at least to just
     over what it draws, a step no later under is blamed on;
   - an under at a TDP a step down brought it to (whenever it comes) goes straight back to the TDP before the step.
     After a 1 W step nothing goes under that TDP for G_HOLD_S, doubled for each further under there, up to
@@ -410,6 +411,8 @@ class Session:
     g_holds: int = 0                                        # unders in a row at g_hold_tdp: the hold doubles each time
     g_down: int = 0                                         # steps on a fresh way down (1, 2, 4 ... W); -1: 1 W steps
     g_drop_step: int = 0                                    # W the last step down took
+    g_before: int | None = None                             # the TDP before a run of raises: the way down tries it first
+    g_jump: bool = False                                    # the last step down went straight back to g_before
     g_maxed: list[float] = field(default_factory=list)
     g_maxed_since: float | None = None
     best_fps: float | None = None       # what the full TDP gave when the target was out of reach
@@ -467,7 +470,7 @@ class Autotune:
         s.g_steady, s.g_steady_tdp = 0, None
         now = time.monotonic()
         s.g_hist, s.g_last_change, s.g_last_miss, s.g_last_drop, s.g_hold_until = [], now, now, None, 0.0
-        s.g_holds, s.g_down = 0, 0
+        s.g_holds, s.g_down, s.g_before, s.g_jump = 0, 0, None, False
         s.g_cap_hist, s.g_free, s.g_cap_at = [], 0, now
         s.g_maxed, s.g_maxed_since, s.unreachable, s.best_fps = [], None, False, None
         s.settled = False
@@ -735,7 +738,8 @@ class Autotune:
                 # the step down took too much: straight back. After a 1 W step nothing goes under that TDP for a while
                 # (doubling when it happens there again); after a bigger one the way down goes on 1 W at a time
                 w, was = s.g_drop_from, l.tdp
-                s.g_last_drop, s.g_down, wait = None, -1, ""
+                # after a failed jump back to the TDP before a raise the scene is heavier: a fresh way down from here
+                s.g_last_drop, s.g_down, s.g_before, wait = None, 0 if s.g_jump else -1, None, ""
                 if s.g_drop_step == 1:
                     again = w == s.g_hold_tdp and now < s.g_hold_until + G_HOLD_MAX_S
                     s.g_holds = s.g_holds + 1 if again else 0
@@ -756,6 +760,7 @@ class Autotune:
             w, was = min(top, max(want, l.tdp + (G_RAISE_BIG if under < T * 0.75 else G_RAISE))), l.tdp
             if self._tdp(l, w):
                 s.g_last_change, s.g_hist, s.g_down = now, [], 0      # a heavier scene: the next way down is fresh
+                s.g_before = was if s.g_before is None else s.g_before
                 self._did(s, f"{under:.0f} fps, under {T:.0f}: raised TDP to {w} W", f"+{w - was} W")
             return
         s.g_maxed_since, s.unreachable = None, False
@@ -785,13 +790,18 @@ class Autotune:
                 step = max(step, min(G_STEP_MAX, l.tdp - -(-int(max(pkg) / G_AT_LIMIT * 10) // 10)))
         else:
             return
+        # after a run of raises, straight back to where it held before: a dip that more watts didn't fix (Midnight Club
+        # LA: 13-22 fps for seconds at 11 W, still under at 26-30 W) kept it 15-19 W higher for minutes, stepping down
+        jump = s.g_before is not None and s.g_before < l.tdp - step
+        step, s.g_before = (l.tdp - s.g_before) if jump else step, None
         w, was = max(low, l.tdp - step), l.tdp
         if self._tdp(l, w):
-            s.g_drop_from, s.g_drop_step, s.g_last_change, s.g_hist = was, was - w, now, []
+            s.g_drop_from, s.g_drop_step, s.g_last_change, s.g_hist, s.g_jump = was, was - w, now, [], jump
             s.g_down += s.g_down >= 0
             # a step that stays over what the chip draws can't be what a later under comes from
-            s.g_last_drop = now if step == 1 or any(p and p >= w * G_AT_LIMIT for p in s.g_pkg) else None
-            self._did(s, f"{lowest:.0f} fps at the lowest for {T:.0f}: lowered TDP to {w} W", f"−{was - w} W")
+            s.g_last_drop = now if jump or step == 1 or any(p and p >= w * G_AT_LIMIT for p in s.g_pkg) else None
+            self._did(s, f"{lowest:.0f} fps at the lowest for {T:.0f}: lowered TDP to {w} W"
+                         f"{', where it held before' if jump else ''}", f"−{was - w} W")
 
     def _cap(self, s: Session, fps: float, smp: Sample, now: float) -> float | None:
         """Target fps mode: the game's own frame cap under your target, or None. Found only where watts can't be what
@@ -832,7 +842,7 @@ class Autotune:
             if MIN_TARGET <= mid < T * (1 - G_TOL) and all(abs(f - mid) <= mid * G_OVER for f in s.g_cap_hist):
                 l.cap = cap = round(mid, 1)
                 s.g_cap_at, s.g_hist, s.g_maxed_since, s.unreachable = now, [], None, False
-                s.g_last_drop, s.g_hold_until, s.g_down = None, 0.0, 0
+                s.g_last_drop, s.g_hold_until, s.g_down, s.g_before = None, 0.0, 0, None
                 where = f"the full {top} W" if l.tdp >= top else f"{l.tdp} W with the chip at {smp.pkg_w:.0f} W"
                 self._did(s, f"steady at {cap:.0f} fps at {where} with the GPU idle part of the time: the game's own "
                           f"cap, held with the fewest watts", "cap")
