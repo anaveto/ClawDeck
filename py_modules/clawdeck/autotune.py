@@ -44,15 +44,17 @@ averages: a locked game's own pacing reads 28.6-30.4 fps for a 30 fps lock secon
   - well over: the lowest G_WIN s average of the last G_LOWER_AFTER s at G_OVER (20 %) over the target or more. Down to
     the watts aimed at G_AIM over it, at most G_STEP_MAX W a step (user: "shouldn't lower unless 20% over");
   - at the target with the GPU not maxed (PowerStation busy under G_BUSY): a frame limit or a lock holds the fps there,
-    so the fps can't show spare watts. 1 W less every G_LOWER_AFTER s while the target holds;
+    so the fps can't show spare watts. 1 W less every G_LOWER_AFTER s while the target holds; with the chip well under
+    the TDP the whole time, straight to just over what it draws (at most G_STEP_MAX W a step), a step no later under
+    is blamed on;
   - an under at a TDP a step down brought it to (whenever it comes) goes straight back to the TDP before the step, and
     nothing goes under that TDP for G_HOLD_S. Only 12 s after the step used to count: a 30 fps lock stepped to 27 W
     missed 75 s later, got 28 W back as a plain under, and was stepped down again 12 s after, over and over. It is never set by an under at the full TDP, and it expires: it used to be a floor that only came
     down in a lighter scene, and a 30 fps lock's own dips at 30 W made 30 W the floor;
   - it starts at the set TDP (your pick for the game). The TDP that held the target for G_SETTLE_S readings in a row is
     saved as the game's own TDP at exit (main.py), so the next start is there;
-  - a game steady under the target at the full TDP with the GPU not maxed runs at its own lock (a PS3 game locked at 30
-    for a 60 target): the lock takes the target's place. It is saved with the game, lifted when the game runs G_OVER
+  - a game steady under the target at the full TDP, or with the chip well under the TDP, with the GPU not maxed runs
+    at its own lock (a PS3 game locked at 30 for a 60 target): the lock takes the target's place. It is saved with the game, lifted when the game runs G_OVER
     over it, and checked every RESCAN_S at the full TDP (G_CAP_S);
   - at the full TDP and still under: it stays there, and after REACH_S says the target is out of reach and what the
     full TDP gives. Your target is never changed (maintainer, 2026-11-12: Auto FPS lowered a 120 fps target to 46 in
@@ -403,7 +405,8 @@ class Session:
     g_hist: list[float] = field(default_factory=list)
     g_pkg: list = field(default_factory=list)       # package W of the last G_UNDER_S readings (None: not read)
     g_cap_hist: list[float] = field(default_factory=list)   # the last G_CAP_S seconds, whatever changed
-    g_at_top: int = 0                                       # seconds in a row at the full TDP
+    g_free: int = 0                                         # seconds in a row the limit didn't hold the chip: at the
+                                                            # full TDP, or the package under G_AT_LIMIT of it
     g_cap_at: float = 0.0                                   # when the cap was found or last checked
     g_probe_from: int | None = None                         # the TDP before the cap check at the full TDP
     g_last_change: float = 0.0
@@ -470,7 +473,7 @@ class Autotune:
         s.g_steady, s.g_steady_tdp = 0, None
         now = time.monotonic()
         s.g_hist, s.g_last_change, s.g_last_miss, s.g_last_drop, s.g_hold_until = [], now, now, None, 0.0
-        s.g_cap_hist, s.g_at_top, s.g_cap_at = [], 0, now
+        s.g_cap_hist, s.g_free, s.g_cap_at = [], 0, now
         s.g_maxed, s.g_maxed_since, s.unreachable, s.best_fps = [], None, False, None
         s.settled = False
         s.last_action = f"holding {s.target:.0f} fps from {l.tdp} W"
@@ -757,7 +760,7 @@ class Autotune:
         s.g_hist.append(fps)
         del s.g_hist[:-G_LOWER_AFTER]                     # since the last change, at most G_LOWER_AFTER s
         s.g_pkg.append(smp.pkg_w)
-        del s.g_pkg[:-G_UNDER_S]
+        del s.g_pkg[:-G_LOWER_AFTER]
         recent = s.g_hist[-G_WIN:]
         win = sum(recent) / len(recent)
         s.avg_fps, s.low_fps = win, min(recent)
@@ -768,7 +771,7 @@ class Autotune:
         under = sum(short) / len(short)
         if len(short) >= G_UNDER_S and under < T * (1 - G_TOL) and fps < T * (1 - G_TOL):  # fresh since the last change
             s.g_last_miss, s.g_steady = now, 0
-            pkg = [p for p in s.g_pkg if p]
+            pkg = [p for p in s.g_pkg[-G_UNDER_S:] if p]
             if pkg and max(pkg) < l.tdp * G_AT_LIMIT:
                 return                                    # the chip ran well under the limit: not the limit's frames
             if s.g_last_drop is not None:
@@ -811,24 +814,34 @@ class Autotune:
             step = max(1, min(G_STEP_MAX, l.tdp - want))
         elif lowest >= T * (1 - G_TOL) and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY:
             step = 1                                      # held at the target, GPU not maxed: a limit holds it, try 1 W
+            pkg = [p for p in s.g_pkg if p]
+            if len(pkg) == len(s.g_pkg) and max(pkg) < l.tdp * G_AT_LIMIT:
+                # the chip well under the TDP the whole time: straight to just over what it draws, which costs no
+                # frames (PCSX2 drew 10-12 W of 27 W, 1 W every 12 s took minutes to get anywhere)
+                step = max(1, min(G_STEP_MAX, l.tdp - -(-int(max(pkg) / G_AT_LIMIT * 10) // 10)))
         else:
             return
         w, was = max(low, l.tdp - step), l.tdp
         if self._tdp(l, w):
-            s.g_drop_from, s.g_last_drop, s.g_last_change, s.g_hist = was, now, now, []
+            s.g_drop_from, s.g_last_change, s.g_hist = was, now, []
+            # a step that stays over what the chip draws can't be what a later under comes from
+            s.g_last_drop = now if step == 1 or any(p and p >= w * G_AT_LIMIT for p in s.g_pkg) else None
             self._did(s, f"{lowest:.0f} fps at the lowest for {T:.0f}: lowered TDP to {w} W", f"−{was - w} W")
 
     def _cap(self, s: Session, fps: float, smp: Sample, now: float) -> float | None:
-        """Target fps mode: the game's own frame cap under your target, or None. Found only at the full TDP, where
-        watts can't be what holds the game back: G_CAP_S seconds there, their median under the band and every one
-        within G_OVER of it, with PowerStation's GPU busy under G_BUSY. It lifts when G_WIN seconds average G_OVER over
+        """Target fps mode: the game's own frame cap under your target, or None. Found only where watts can't be what
+        holds the game back, at the full TDP or with the chip well under the TDP (G_AT_LIMIT; PCSX2 at 27 W drew 12 W
+        and never went to the full TDP once an under well under the limit stopped getting watts): G_CAP_S seconds in a
+        row there, their median under the band and every one within G_OVER of it, with PowerStation's GPU busy under
+        G_BUSY. It lifts when G_WIN seconds average G_OVER over
         it (a menu, the lock removed). Every RESCAN_S under the full TDP, G_LOWER_AFTER s at the full TDP show whether the
         game would now run faster (an unlocked game held under the cap by the power alone never runs over it); if not,
         the TDP goes straight back. +4 W used to be the check: from 8 W and 24 fps that gave 36, never over the band."""
         l, T, top = s.learned, float(s.target or 0), self._top(s)
         s.g_cap_hist.append(fps)
         del s.g_cap_hist[:-G_CAP_S]
-        s.g_at_top = s.g_at_top + 1 if l.tdp >= top else 0
+        free = l.tdp >= top or bool(smp.pkg_w and smp.pkg_w < l.tdp * G_AT_LIMIT)
+        s.g_free = s.g_free + 1 if free else 0
         cap = l.cap if l.cap and l.cap < T else None
         recent = s.g_cap_hist[-G_WIN:]
         if cap and len(recent) >= G_WIN and sum(recent) / len(recent) > cap * (1 + G_OVER):
@@ -848,15 +861,16 @@ class Autotune:
                 s.g_cap_at, s.g_last_change, s.g_hist = now, now, []
                 self._did(s, f"does the game's own {cap:.0f} fps cap still hold? TDP to {top} W",
                           f"+{top - s.g_probe_from} W")
-        elif (cap is None and s.g_at_top >= G_CAP_S and len(s.g_cap_hist) >= G_CAP_S
+        elif (cap is None and s.g_free >= G_CAP_S and len(s.g_cap_hist) >= G_CAP_S
               and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY):
             mid = statistics.median(s.g_cap_hist)
             if MIN_TARGET <= mid < T * (1 - G_TOL) and all(abs(f - mid) <= mid * G_OVER for f in s.g_cap_hist):
                 l.cap = cap = round(mid, 1)
                 s.g_cap_at, s.g_hist, s.g_maxed_since, s.unreachable = now, [], None, False
                 s.g_last_drop, s.g_hold_until = None, 0.0
-                self._did(s, f"steady at {cap:.0f} fps at the full {top} W with the GPU idle part of the time: the "
-                          f"game's own cap, held with the fewest watts", "cap")
+                where = f"the full {top} W" if l.tdp >= top else f"{l.tdp} W with the chip at {smp.pkg_w:.0f} W"
+                self._did(s, f"steady at {cap:.0f} fps at {where} with the GPU idle part of the time: the game's own "
+                          f"cap, held with the fewest watts", "cap")
         return cap
 
     def _out_of_reach(self, s: Session, win: float, now: float) -> None:

@@ -1988,12 +1988,13 @@ def test_target_frames_lost_well_under_the_limit_are_not_the_limits(fake_hw, mon
     at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=20)
     s.max_tdp = 35
     now = {"fps": 30.0}
-    game = _Game(at, lambda *_: now["fps"], gpu_busy=40, pkg_w=8.0)    # a 30 fps lock the GPU and the limit don't hold
+    game = _Game(at, lambda *_: now["fps"], gpu_busy=40, pkg_w=18.0)   # a 30 fps lock at the limit, GPU not maxed
     for _ in range(30):
         run(1)
         if s.learned.tdp < 20:
             break
     assert s.learned.tdp == 19 and "lowered TDP to 19 W" in s.last_action
+    game.smp["pkg_w"] = 8.0                                        # a stall: the chip far under the limit
     now["fps"] = 24.0
     run(3)
     assert s.learned.tdp == 19 and "back to" not in s.last_action
@@ -2003,6 +2004,24 @@ def test_target_frames_lost_well_under_the_limit_are_not_the_limits(fake_hw, mon
     now["fps"] = 24.0
     run(2)
     assert s.learned.tdp == 20 and "back to 20 W" in s.last_action
+    at.session = None
+
+
+def test_target_a_lock_with_the_chip_well_under_the_limit(fake_hw, monkeypatch):
+    """A game locked under the target with the chip well under the TDP is at its own lock without going to the full
+    TDP (Midnight Club 3 on PCSX2: 30 fps for a 60 target at 27 W with the chip at 12 W stayed at 27 W), and the TDP
+    comes straight down to just over what the chip draws, not 1 W every 12 s."""
+    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=27)
+    s.max_tdp = 30
+    _Game(at, lambda *_: 30.0, gpu_busy=40, pkg_w=12.0)
+    run(autotune.G_CAP_S + 1)
+    assert s.learned.cap == 30.0 and "steady at 30 fps at 27 W with the chip at 12 W" in s.last_action
+    run(autotune.G_LOWER_AFTER)
+    assert s.learned.tdp == 21 and s.g_last_drop is None           # 6 W at most a step, over the chip's 12 W
+    run(autotune.G_LOWER_AFTER)
+    assert s.learned.tdp == 15                                     # 12 W is 85 % of 14.1: just over it
+    run(autotune.G_LOWER_AFTER)
+    assert s.learned.tdp == 14 and s.g_last_drop is not None       # from here on 1 W steps that can be taken back
     at.session = None
 
 
