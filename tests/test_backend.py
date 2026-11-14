@@ -1581,6 +1581,33 @@ def test_target_holds_a_games_own_frame_cap_with_the_fewest_watts(fake_hw, monke
     at.session = None
 
 
+def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, monkeypatch):
+    """Midnight Club LA (RPCS3, locked at 30, target 60, 2026-11-14): 29.9-30.2 fps with one 28.6 fps second every
+    13 s, at any TDP. Those dips are the game's own pacing: judged on 3 s averages within the cap's tolerance they are
+    no miss, so the watts come down to what holds 30, and a dip at the full TDP doesn't make the full TDP the floor.
+    A real shortage (fps steadily under the cap) still gets watts back."""
+    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
+    game = _BusyGame(at, 3.0, cap=30.0, busy_capped=40)          # 10 W holds 30
+    tick = {"n": 0}
+    base = game.fps
+
+    def paced(tdp, *a):
+        tick["n"] += 1
+        f = base(tdp, *a)
+        if f >= 30.0:                                            # locked: the game's own pacing around 30
+            return 28.6 if tick["n"] % 13 == 0 else (29.9, 30.0, 30.2)[tick["n"] % 3]
+        return f
+    game.fps = paced
+    run(30)
+    assert s.learned.cap == 30 and s.g_floor < 30
+    run(400)
+    assert s.learned.tdp <= 11 and s.g_floor < 30               # down to what holds 30, dips or not
+    game.per_w = 2.0                                             # heavier scene: 10 W now gives 20 fps
+    run(10)
+    assert s.learned.tdp >= 15 and "under the 30 fps minimum" in s.last_action
+    at.session = None
+
+
 def test_target_a_game_steady_just_under_the_target_is_not_a_frame_cap(fake_hw, monkeypatch):
     """Enshrouded at the full TDP, steady at 59 fps for a 60 target with the GPU busy under 85 % (2026-11-14): that
     is the game missing the target, not a cap under it, so the full TDP stays."""
