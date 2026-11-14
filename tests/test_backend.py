@@ -1525,29 +1525,38 @@ def test_target_holds_the_target_with_the_fewest_watts(fake_hw, monkeypatch):
     at.session = None
 
 def test_target_with_a_frame_limit_at_the_target_lowers_while_the_gpu_has_headroom(fake_hw, monkeypatch):
-    """Steam's frame limit at the target pins fps there, so the fps can't show spare watts: with the GPU not maxed, 1 W
-    at a time while the target holds, and it stops where the GPU gets busy."""
+    """Steam's frame limit at the target pins fps there, so the fps can't show spare watts: with the GPU not maxed, steps
+    of 1, 2, 4, 6 W while the target holds, back and 1 W at a time after the one that ends under, and it stops where the
+    GPU gets busy. 1 W every 12 s took 3.5 minutes from 30 to 12 W (user: "it needs to be more responsive")."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     _BusyGame(at, 5.0, cap=60.0)                                 # 12 W gives 60
     run(400)
-    assert s.learned.tdp == 12 and min(run.seen["fps"]) >= 60
+    assert s.learned.tdp == 12 and run.seen["tdp"].index(12) < 130   # 18 steps of 12 s took 216 s
+    assert len([f for f in run.seen["fps"] if f < 60 * (1 - autotune.G_TOL)]) <= 2   # one step too far: 2 s under
     changes = s.last_change_at
     run(240)
     assert s.learned.tdp == 12 and s.last_change_at == changes   # the GPU is busy at 12 W
     at.session = None
 
 def test_target_a_step_down_that_misses_goes_back_and_waits_before_trying_again(fake_hw, monkeypatch):
-    """No floor: a step down that ends under the target goes straight back, nothing goes under that TDP for G_HOLD_S,
-    then it tries again (the scene may be lighter). Without the wait a locked game would drop under its lock every
-    half minute."""
+    """No floor: a step down that ends under the target goes straight back. After a 2 W step it goes on 1 W at a time;
+    after a 1 W step nothing goes under that TDP for G_HOLD_S, then it tries again (the scene may be lighter), and each
+    further under there doubles the wait. Without a wait a locked game would drop under its lock every half minute; a
+    10 minute one kept a PS3 game at 30 W through a light area (user: "it needs to be more responsive")."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
     _Game(at, lambda tdp, *_: 66.0 if tdp >= 18 else 50.0, gpu_busy=50)   # held at 66 from 18 W, 50 under it
-    run(100)
-    assert s.learned.tdp == 18 and "back to 18 W for 10 min" in s.last_action
-    run(autotune.G_HOLD_S - 120)
-    assert 17 not in run.seen["tdp"][100:]                       # not again within the wait
-    run(240)
-    assert 17 in run.seen["tdp"][100:] and s.learned.tdp == 18   # tried once more, back again
+    run(30)
+    assert s.learned.tdp == 19 and "back to 19 W" in s.last_action and " for " not in s.last_action   # 2 W too far
+    run(25)
+    assert s.learned.tdp == 18 and "back to 18 W for 60 s" in s.last_action   # 1 W too far
+    mark = len(run.seen["tdp"])
+    run(autotune.G_HOLD_S - 5)
+    assert 17 not in run.seen["tdp"][mark:]                      # not again within the wait
+    run(20)
+    assert 17 in run.seen["tdp"][mark:] and "back to 18 W for 2 min" in s.last_action   # tried again: twice the wait
+    mark = len(run.seen["tdp"])
+    run(2 * autotune.G_HOLD_S - 25)
+    assert 17 not in run.seen["tdp"][mark:]
     at.session = None
 
 def test_target_a_demanding_game_keeps_its_watts(fake_hw, monkeypatch):
@@ -1576,7 +1585,8 @@ def test_target_holds_a_games_own_frame_cap_with_the_fewest_watts(fake_hw, monke
         t += 1
     assert s.learned.cap == 30 and t <= 11 and "own cap" in s.last_action   # found at the full TDP in seconds
     run(400)
-    assert s.learned.tdp == 10 and min(run.seen["fps"][30:]) >= 30 * (1 - autotune.G_TOL)   # held with 10 W
+    assert s.learned.tdp == 10                                     # held with 10 W
+    assert len([f for f in run.seen["fps"][30:] if f < 30 * (1 - autotune.G_TOL)]) <= 2   # one step too far: 2 s
     at.session = None
 
 def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, monkeypatch):
@@ -1610,20 +1620,22 @@ def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, mo
 def test_target_a_late_under_after_a_step_down_also_goes_back_and_waits(fake_hw, monkeypatch):
     """Midnight Club LA, 2026-11-14 13:41: stepped from 28 to 27 W, 75 s later an under, 28 W back as a plain raise, and
     12 s later 27 W again, over and over. An under at a TDP a step down brought it to goes back and waits, whenever it
-    comes."""
+    comes; each further under there doubles the wait."""
     at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=28)
     late = {"at": None}
 
     def fps(tdp, *_):
         if tdp >= 28:
             return 30.0
+        if tdp < 27:
+            return 27.0
         late["at"] = late["at"] or autotune.time.monotonic()
         return 30.0 if autotune.time.monotonic() - late["at"] < 75 else 27.0   # 27 W holds for 75 s, then not
     _Game(at, fps, gpu_busy=40)
-    run(200)
-    assert s.learned.tdp == 28 and "back to 28 W for 10 min" in s.last_action
-    run(autotune.G_HOLD_S - 120)
-    assert run.seen["tdp"][-(autotune.G_HOLD_S - 120):].count(27) == 0   # no flip-flop
+    run(700)
+    tries = sum(1 for a, b in zip(run.seen["tdp"], run.seen["tdp"][1:]) if (a, b) == (28, 27))
+    assert tries <= 5 and s.learned.tdp == 28 and "back to 28 W for 8 min" in s.last_action   # 1, 2, 4, 8 min
+    #                                                                     between tries, not 12 s
     at.session = None
 
 
@@ -1633,7 +1645,8 @@ def test_target_a_game_steady_just_under_the_target_is_not_a_frame_cap(fake_hw, 
     at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
     _BusyGame(at, 3.0, cap=59.0, busy_capped=80)                  # held at 59 fps by the game, GPU 80 % busy
     run(400)
-    assert s.learned.cap is None and s.learned.tdp == 20 and min(run.seen["fps"]) >= 59
+    assert s.learned.cap is None and s.learned.tdp == 20
+    assert len([f for f in run.seen["fps"] if f < 60 * (1 - autotune.G_TOL)]) <= 2   # one step too far: 2 s
     at.session = None
 
 def test_target_a_frame_cap_lifts_when_the_game_runs_faster(fake_hw, monkeypatch):
@@ -1853,7 +1866,8 @@ def test_target_a_lock_with_the_chip_well_under_the_limit(fake_hw, monkeypatch):
     run(autotune.G_LOWER_AFTER)
     assert s.learned.tdp == 15                                     # 12 W is 85 % of 14.1: just over it
     run(autotune.G_LOWER_AFTER)
-    assert s.learned.tdp == 14 and s.g_last_drop is not None       # from here on 1 W steps that can be taken back
+    assert s.learned.tdp == 11 and s.g_last_drop is not None       # the third step of a way down: 4 W, and at the
+                                                                   # limit now, so it can be taken back
     at.session = None
 
 
