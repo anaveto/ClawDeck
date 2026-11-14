@@ -157,7 +157,6 @@ class Plugin:
         self.caps = hw.capabilities(self.hw, fan.kind(self.fan_hw))
         decky.logger.info("device capabilities: %s", self.caps)
         self._reapply_fan_charge("start")
-        self._thermal_log_task = asyncio.get_event_loop().create_task(self._thermal_log_loop())
         if self.settings.get("overlay_power"):   # sysfs resets at boot: reapply the user's choice at every start
             r = telemetry.apply(True)
             decky.logger.info("watts in the overlay: %s", "on" if r["ok"] else r["error"])
@@ -195,8 +194,6 @@ class Plugin:
             self._save_settings()
 
     async def _unload(self):
-        if getattr(self, "_thermal_log_task", None):
-            self._thermal_log_task.cancel()
         if getattr(self, "_frontend_watch", None):
             self._watch_frontend(False)
         self.autotune.stop()
@@ -821,17 +818,12 @@ class Plugin:
                 await self._guard_check()
             except Exception as e:   # a sensor hiccup must never kill the guard
                 decky.logger.exception("temperature guard: %s", e)
-        self.guard.reset()          # thermald is back in charge
-
-    async def _thermal_log_loop(self) -> None:
-        """thermal.csv every CHECK_S, whoever holds the TDP (ClawDeck or thermald): temperature, power, fans."""
-        while True:
-            await asyncio.sleep(thermal.CHECK_S)
-            try:
+            try:                     # thermal.csv: the check's temperature next to the power and the fans
                 self.thermal_log.row(thermal.read_c(self.guard.path), self.power.read_tdp(), self.guard.stepped_w,
                                      fan.speeds(getattr(self, "fan_hw", None)))
-            except Exception as e:   # a sensor hiccup must never stop the log
+            except Exception as e:   # ... and never kill the guard either
                 decky.logger.warning("thermal.csv: %s", e)
+        self.guard.reset()          # thermald is back in charge
 
     async def _guard_check(self) -> int | None:
         async with self._power_lock:
