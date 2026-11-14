@@ -32,30 +32,26 @@ the minimum TDP, which is why the rule is "within KEEP of the most", not "the be
 Cost, per second while a game runs: the new lines of two small logs, /proc/stat, two GPU clock files and the RAPL
 energy counter. The log directory listing and PowerStation's GPU load are cached (LOG_RESCAN_S, BUSY_EVERY_S).
 
-Target fps (optional, Power -> Autotune target): instead of "nearly the most frames", the fewest watts that keep
-every second at the fps you picked or over (a minimum, not an average), judged every second on rendered (base) frames. The rules are DeckyTDPTuner's governor (GPL-3,
-backend/internal/tdp/governor.go), proven on the Steam Deck, with Intel's PL1 in mind:
-  - a miss is any second under G_AT of the target: +G_RAISE W at once (+G_RAISE_BIG far under, proportional to the
-    shortfall, up to the maximum in one step), at most every G_RAISE_GAP s, then judged on fresh frames only;
-  - lower only after G_LOWER_AFTER s with no change and no miss (G_LOWER_FAST s while G_FAR above), judged on the
-    lowest second in that time: only while it is G_LOWER_OVER (20 %) over the target, and a step is taken only if,
-    with frames following watts (Handheld Companion's
-    assumption, which overstates the loss), that lowest second would still be G_SAFE of the target. 1 W near the target, far above it half the way to where the watts would just hold it, at most G_STEP_MAX W.
-    A frame limit at the target pins fps there: at G_AT with PowerStation's GPU busy under G_BUSY, 1 W at a time;
-  - it starts at the set TDP (your pick for the game) and goes from there: up to the model's maximum for this power
-    source while under the target, down only as above; raises are proportional (at least +2 W, +4 W far under, no
-    cap). Every reading counts, a low one too. The TDP that held the target for G_SETTLE_S readings in a
-    row is saved as the game's own TDP at exit (main.py), so the next start is there;
-  - a miss within G_BLAME s of lowering makes the watts before it the floor (a calm scene can't talk it below what the
-    heavy ones need: the RE4 report, 2026-11-08), and a miss at the full TDP makes the full TDP the floor (a demanding
-    game keeps every watt: Enshrouded, 2026-11-14); the floor comes down 1 W per G_FLOOR_DECAY s without a miss once
-    the game is clearly lighter;
-  - a game steady under the target at the full TDP with the GPU idle part of the time runs at its own frame cap (a PS3
-    game locked at 30): that cap is the minimum instead, held with the fewest watts, saved with the game, lifted when
-    the game runs over it and checked every RESCAN_S (G_CAP_S);
-  - at the full TDP and still under: it stays at the full TDP, and after REACH_S says the target is out of reach and
-    what the full TDP gives. Your target is never changed (maintainer, 2026-11-12: Auto FPS lowered a 120 fps target
-    to 46 in Enshrouded and then took watts away to hold that).
+Target fps (optional, Power -> Autotune target): hold the fps you picked, or the game's own lock when that is lower,
+with the fewest watts that can (user, 2026-11-14), judged every second on rendered (base) frames, always on G_WIN s
+averages: a locked game's own pacing reads 28.6-30.4 fps for a 30 fps lock second by second (Midnight Club LA):
+  - under: an average more than G_TOL_FPS under the target. Watts at once, aimed at G_AIM over the target with frames
+    following watts, at least +G_RAISE W (+G_RAISE_BIG far under), up to the model's maximum in one step;
+  - well over: the lowest G_WIN s average of the last G_LOWER_AFTER s at G_OVER (20 %) over the target or more. Down to
+    the watts aimed at G_AIM over it, at most G_STEP_MAX W a step (user: "shouldn't lower unless 20% over");
+  - at the target with the GPU not maxed (PowerStation busy under G_BUSY): a frame limit or a lock holds the fps there,
+    so the fps can't show spare watts. 1 W less every G_LOWER_AFTER s while the target holds;
+  - a step down that ends in an under within G_LOWER_AFTER s goes straight back, and nothing goes under that TDP for
+    G_HOLD_S. It is never set by an under at the full TDP, and it expires: it used to be a floor that only came
+    down in a lighter scene, and a 30 fps lock's own dips at 30 W made 30 W the floor;
+  - it starts at the set TDP (your pick for the game). The TDP that held the target for G_SETTLE_S readings in a row is
+    saved as the game's own TDP at exit (main.py), so the next start is there;
+  - a game steady under the target at the full TDP with the GPU not maxed runs at its own lock (a PS3 game locked at 30
+    for a 60 target): the lock takes the target's place. It is saved with the game, lifted when the game runs G_OVER
+    over it, and checked every RESCAN_S at the full TDP (G_CAP_S);
+  - at the full TDP and still under: it stays there, and after REACH_S says the target is out of reach and what the
+    full TDP gives. Your target is never changed (maintainer, 2026-11-12: Auto FPS lowered a 120 fps target to 46 in
+    Enshrouded and then took watts away to hold that).
 The PL1 time window stays short (LEARN_TAU_US) while it governs, so a lower limit takes effect within seconds. With
 frame generation the target counts rendered frames: XeLL's figure, or the presented rate divided by ClawDeck's frame
 generation multiplier for the game when XeLL isn't there.
@@ -102,35 +98,27 @@ MAX_SKIPS = 3           # three such windows in a row are real (new settings, a 
 XELL_FRESH_S = 15       # a rendered-frame figure older than this no longer counts
 LEARN_TAU_US = 8_000_000  # PL1 time window while learning: shorter than WINDOW_S, so a window sees sustained power
 SETTLED_WINDOWS = 3     # windows without a change in hold = learned: the firmware's PL1 window comes back
-# target fps (DeckyTDPTuner's governor, see above)
-G_WIN = 3               # seconds of history a miss is judged on (theirs: 4 ticks of 0.5 s)
+# target fps (see above)
+G_WIN = 3               # seconds an average is taken over: one slow or fast second is no trend
+G_TOL_FPS = 1.0         # an average this far under the target still holds it: one frame a second (a 30 fps lock's 3 s
+                        # averages stay within it 98 % of the time; percentages were too tight at 30 and too loose at
+                        # 120: "at 30fps, 3% is less than a single frame", user, 2026-11-14)
+G_OVER = 0.20           # well over the target: the lowest average this far over before watts are taken away (72 fps for
+                        # 60); 64 fps used to count as room and Enshrouded was cut six times in 8 minutes. Also how far
+                        # over a lock the game must run for the lock to lift, and how steady a lock must be
+G_AIM = 0.10            # raises and steps down aim this far over the target, inside [target, G_OVER): no bouncing
 G_RAISE, G_RAISE_BIG = 2, 4
-G_SETTLE_S = 60         # readings in a row at one TDP, at the target and without a miss: that TDP holds it
-G_RAISE_GAP = 2         # s between raises: the last one has to kick in
-G_LOWER_AFTER = 12      # s with no change and no miss before lowering near the target
-G_LOWER_FAST = 5        # ... and while clearly above it (G_FAR): the PL1 window is 8 s, so a step shows within that
-G_FAR = 1.15            # this far above the target: proportional steps down, G_LOWER_FAST apart
-G_LOWER_OVER = 1.20     # no step down unless the lowest second is this far over the target (72 fps for 60). It used to
-                        # take only G_SAFE after the step: Enshrouded at 64-66 fps for a 60 target was cut again and
-                        # again (maintainer, 2026-11-14: "far too sensitive. shouldn't lower unless 20% over")
+G_RAISE_GAP = 2         # s between raises in most-frames mode (_fast_miss): the last one has to kick in
+G_SETTLE_S = 60         # readings in a row at one TDP holding the target: that TDP holds it
+G_LOWER_AFTER = 12      # s since the last change before a step down, and how long a step down is watched (PL1 window 8 s)
 G_STEP_MAX = 6          # the most one step down moves (up: no cap)
-G_SAFE = 1.03           # a step down only if the fps after it, with frames following watts, is still this share of
-                        # the target (the target met with room to spare, never lowered into a miss)
-G_AT = 0.99             # the minimum, within 1 % (a frame limit at 60 reads 59.9): any second under it is a miss;
-                        # at it, lowered 1 W only with GPU headroom (G_BUSY)
-G_BLAME = 20            # s: a miss this soon after lowering blames the lowering (theirs 5 s; Intel's PL1 window here)
-G_FLOOR_DECAY = 300     # s without a miss: the learned floor comes down 1 W (theirs 120 s: one dip every 2 min
-                        # in a game that stays heavy; 5 min here)
+G_HOLD_S = 600          # s nothing goes under a TDP whose step down ended in an under
 G_BUSY = 85             # GPU busy under this % is headroom (when PowerStation reports it)
 REACH_S = 60            # s at the full TDP and still under: the target is out of reach (said, never changed)
-G_CAP_S = 10            # s at the full TDP under the target, steady, with the GPU idle part of the time: the game's own
-                        # frame cap (a PS3 game locked at 30 for a 60 target). Watts can't raise it, so it is held
-                        # instead of the target, with the fewest watts (maintainer, 2026-11-14: "it shouldn't pin 30W
-                        # because 30fps < 60fps target when the locked framerate could be met with a lower power limit")
-G_CAP_SPREAD = 0.03     # ... steady: every one of those seconds within 3 % of their median
-G_CAP_OFF = 1.20        # G_WIN s this far over the cap on average (a menu at 60, the cap removed): it no longer holds.
-                        # Not less: fps varies, and a lifted cap means watts for the target again (maintainer,
-                        # 2026-11-14: "5% is a very small number. fps is variable")
+G_CAP_S = 10            # s at the full TDP under the target, every second within G_OVER of the median, with the GPU not
+                        # maxed: the game's own lock (a PS3 game locked at 30 for a 60 target). Watts can't raise it, so
+                        # it takes the target's place (maintainer, 2026-11-14: "it shouldn't pin 30W because 30fps < 60fps
+                        # target when the locked framerate could be met with a lower power limit")
 MIN_TARGET = 20
 XELL_RE = re.compile(rb"xellSleep stats: 100 calls in (\d+) ms \(([\d.]+) ms/frame\)")
 
@@ -392,12 +380,13 @@ class Session:
     g_cap_hist: list[float] = field(default_factory=list)   # the last G_CAP_S seconds, whatever changed
     g_at_top: int = 0                                       # seconds in a row at the full TDP
     g_cap_at: float = 0.0                                   # when the cap was found or last checked
+    g_probe_from: int | None = None                         # the TDP before the cap check at the full TDP
     g_last_change: float = 0.0
     g_last_miss: float = 0.0
-    g_last_drop: float | None = None
+    g_last_drop: float | None = None                        # a step down being watched (G_LOWER_AFTER s)
     g_drop_from: int = 0
-    g_floor: int = 0
-    g_floor_at: float = 0.0
+    g_hold_tdp: int = 0                                     # nothing under this TDP until g_hold_until
+    g_hold_until: float = 0.0
     g_maxed: list[float] = field(default_factory=list)
     g_maxed_since: float | None = None
     best_fps: float | None = None       # what the full TDP gave when the target was out of reach
@@ -454,8 +443,7 @@ class Autotune:
         l.tdp, l.target, l.held = min(s.ceiling_tdp, self._top(s)), target, None
         s.g_steady, s.g_steady_tdp = 0, None
         now = time.monotonic()
-        s.g_hist, s.g_last_change, s.g_last_miss, s.g_last_drop = [], now, now, None
-        s.g_floor, s.g_floor_at = s.floor_tdp, now
+        s.g_hist, s.g_last_change, s.g_last_miss, s.g_last_drop, s.g_hold_until = [], now, now, None, 0.0
         s.g_cap_hist, s.g_at_top, s.g_cap_at = [], 0, now
         s.g_maxed, s.g_maxed_since, s.unreachable, s.best_fps = [], None, False, None
         s.settled = False
@@ -489,7 +477,6 @@ class Autotune:
         if s.phase == "target":                           # your new pick: from there again
             self._tdp(s.learned, s.ceiling_tdp)
             s.g_hist, s.g_last_change, s.g_maxed_since, s.unreachable = [], time.monotonic(), None, False
-            s.g_floor = min(s.g_floor, s.ceiling_tdp)
         else:
             self._remeasure(s, "TDP set to %d W" % s.ceiling_tdp)
         s.paused = False
@@ -694,16 +681,15 @@ class Autotune:
         return True
 
     def _govern(self, s: Session, fps: float, smp: Sample) -> None:
-        """Target fps mode, every second (see the module docstring). The target is a minimum: every second at it or
-        over, with the fewest watts that keep it there (maintainer, 2026-11-12: "60 fps target means 60 fps minimum")."""
+        """Target fps mode, every second (see the module docstring): the target, or the game's own lock under it, with
+        the fewest watts that hold it."""
         l, now, T = s.learned, time.monotonic(), s.target or 0
         if not T:
             return
         cap = self._cap(s, fps, smp, now)
-        T = cap or T                                        # the game's own frame cap under the target is the minimum
-        # every reading counts, a low one too: under the target is under it, loading screen or not. Raising is the
-        # safe side; skipping fps under 35 % of the target as "a menu" kept a game at 8 W and 11-28 fps for 40 s
-        # (Order of the Sinking Star, target 120, 2026-11-12)
+        T = cap or T                                        # the game's own lock under the target takes its place
+        # every reading counts, a low one too: skipping fps under 35 % of the target as "a menu" kept a game at 8 W and
+        # 11-28 fps for 40 s (Order of the Sinking Star, target 120, 2026-11-12)
         s.g_hist.append(fps)
         del s.g_hist[:-G_LOWER_AFTER]                     # since the last change, at most G_LOWER_AFTER s
         recent = s.g_hist[-G_WIN:]
@@ -712,114 +698,93 @@ class Autotune:
         if smp.pkg_w:
             s.fps_per_w = fps / smp.pkg_w
         top = self._top(s)
-        # under a cap the game's own pacing varies (a 30 fps lock reads 28.6-30.4 at the full TDP): judged on G_WIN s
-        # averages within G_CAP_SPREAD, the tolerance the cap was found with, not on single seconds (Midnight Club LA,
-        # 2026-11-14: one 28.6 fps second at 29 W sent it back to 30 W and made 30 W the floor)
-        level = sum(s.g_cap_hist[-G_WIN:]) / len(s.g_cap_hist[-G_WIN:]) if cap else fps
-        if level < (T * (1 - G_CAP_SPREAD) if cap else T * G_AT):
-            # under the minimum this second: watts at once. It used to take a 3 s average under 93 % (56 fps for 60),
-            # and 56-59 fps got +1 W only after 12 s
+        if s.g_last_drop is not None and now - s.g_last_drop >= G_LOWER_AFTER:
+            s.g_last_drop = None                          # the step down held
+        if len(recent) >= G_WIN and win < T - G_TOL_FPS:  # G_WIN fresh seconds since the last change
             s.g_last_miss, s.g_steady = now, 0
-            blamed = s.g_last_drop is not None and now - s.g_last_drop < G_BLAME and s.g_drop_from > l.tdp
-            if blamed and s.g_drop_from > s.g_floor:
-                s.g_floor, s.g_floor_at = s.g_drop_from, now
+            if s.g_last_drop is not None:
+                # the step down took too much: straight back, and nothing under that TDP for G_HOLD_S
+                w, was = s.g_drop_from, l.tdp
+                s.g_hold_tdp, s.g_hold_until, s.g_last_drop = w, now + G_HOLD_S, None
+                if self._tdp(l, w):
+                    s.g_last_change, s.g_hist = now, []
+                    self._did(s, f"{win:.0f} fps after the step down, under {T:.0f}: back to {w} W", f"+{w - was} W")
+                return
             if l.tdp >= top:
-                # under the minimum at the full TDP: the game needs every watt, so the full TDP is the floor until the
-                # game gets lighter (the floor's decay below). Only a miss right after a step down used to set it, and
-                # Enshrouded (~66 fps at 30 W, under 60 in heavy scenes) was cut to 27-29 W six times in 8 minutes,
-                # every cut ended by a miss (maintainer, 2026-11-14: "it shouldn't try to lower power in demanding games").
-                # Not under a cap: there the game's own hitches miss at the full TDP too, and watts can't help them
-                if cap:
-                    return
-                if s.g_floor < top:
-                    s.g_floor, s.g_floor_at = top, now
-                    log.info("autotune target: under %.0f fps at the full %d W: no lowering until the game gets lighter",
-                             T, top)
-                self._out_of_reach(s, fps, now)
+                if not cap:
+                    self._out_of_reach(s, win, now)
                 return
-            if now - s.g_last_change < G_RAISE_GAP:
-                return
-            # watts roughly follow frames: the share missing, at least +2 W (+4 W far under), up to the maximum in one
-            # step. No cap: a raise that overshoots (a loading hitch isn't short of watts) costs a few seconds of watts,
-            # a capped one costs frames under the minimum (maintainer, 2026-11-12)
-            need = -(-int(l.tdp * (T / max(level, 1.0) - 1) * 10) // 10)
-            step = max(G_RAISE_BIG if level < T * 0.75 else G_RAISE, need)
-            w, was = min(top, l.tdp + step), l.tdp
-            if blamed:
-                w, s.g_last_drop = min(top, max(s.g_drop_from, l.tdp + 1)), None   # exactly back to what held
+            # watts roughly follow frames: aimed at G_AIM over the target, at least +2 W (+4 W far under), up to the
+            # maximum in one step. No cap: an overshoot costs a few seconds of watts, a short step costs frames
+            want = -(-int(l.tdp * T * (1 + G_AIM) / max(win, 1.0) * 10) // 10)
+            w, was = min(top, max(want, l.tdp + (G_RAISE_BIG if win < T * 0.75 else G_RAISE))), l.tdp
             if self._tdp(l, w):
                 s.g_last_change, s.g_hist = now, []
-                self._did(s, f"{level:.0f} fps, under the {T:.0f} fps minimum: raised TDP to {w} W", f"+{w - was} W")
+                self._did(s, f"{win:.0f} fps, under {T:.0f}: raised TDP to {w} W", f"+{w - was} W")
             return
         s.g_maxed_since, s.unreachable = None, False
-        # the floor comes down only when the game got lighter (well above the target, or the GPU clearly idle under a
-        # frame limit): a game that stays as heavy keeps its watts locked instead of a probe dip every few minutes
-        lighter = win >= T * G_FAR or (smp.gpu_busy is not None and smp.gpu_busy < 60)
-        if (lighter and s.g_floor > s.floor_tdp and now - s.g_last_miss > G_FLOOR_DECAY
-                and now - s.g_floor_at > G_FLOOR_DECAY):
-            s.g_floor, s.g_floor_at = s.g_floor - 1, now
-        # a TDP holds the target once G_SETTLE_S seconds in a row at it were all at the minimum or over. It used to be a
-        # minute on the clock since the last change and miss, which counted skipped readings too: a session marked
-        # settled at 8 W and 15 fps saved the 23 W an exit menu at 400 fps had brought it to (OotSS, 2026-11-12)
+        # a TDP holds the target once G_SETTLE_S readings in a row at it held it. It used to be a minute on the clock,
+        # which counted skipped readings too: a session marked settled at 8 W and 15 fps saved the 23 W an exit menu at
+        # 400 fps had brought it to (OotSS, 2026-11-12)
         s.g_steady = s.g_steady + 1 if s.g_steady_tdp == l.tdp else 1
         s.g_steady_tdp = l.tdp
         if s.g_steady >= G_SETTLE_S:
             s.settled, l.held = True, l.tdp
-        floor = max(s.floor_tdp, s.g_floor)
-        lowest = min(s.g_hist)
-        if cap and len(s.g_hist) >= G_WIN:                # under a cap: the lowest G_WIN s average, as for a miss
-            lowest = min(sum(s.g_hist[i:i + G_WIN]) / G_WIN for i in range(len(s.g_hist) - G_WIN + 1))
-        far = lowest >= T * G_FAR
-        wait = G_LOWER_FAST if far else G_LOWER_AFTER
-        # judged on the lowest second since the last change (up to G_LOWER_AFTER s), not the average: the most a step
-        # may take keeps that lowest second G_SAFE over the minimum, with frames following watts. A frame limit at the
-        # target pins fps there, so it can never be exceeded: at the target with the GPU under G_BUSY, the limit holds
-        # it, not the power, and 1 W is safe (a miss right after it undoes the step and makes it the floor)
-        safe = int(l.tdp * (1 - T * G_SAFE / lowest)) if lowest >= T * G_LOWER_OVER else 0
-        if (safe < 1 and lowest >= (T * (1 - G_CAP_SPREAD) if cap else T * G_AT)
-                and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY):
-            safe = 1
-        if (l.tdp > floor and len(s.g_hist) >= wait and safe >= 1
-                and now - s.g_last_change >= wait and now - s.g_last_miss >= wait):
-            # far above: half the way to where the watts would just hold the target, at most G_STEP_MAX; near it: 1 W
-            step = min(safe, max(1, min(G_STEP_MAX, int((l.tdp - l.tdp * T / lowest) / 2))) if far else 1)
-            w, was = max(floor, l.tdp - step), l.tdp
-            if self._tdp(l, w):
-                s.g_drop_from, s.g_last_drop, s.g_last_change, s.g_hist = was, now, now, []
-                self._did(s, f"{lowest:.0f} fps at the lowest holds the {T:.0f} fps minimum: lowered TDP to {w} W",
-                          f"−{was - w} W")
+        low = max(s.floor_tdp, s.g_hold_tdp if now < s.g_hold_until else 0)
+        if len(s.g_hist) < G_LOWER_AFTER or now - s.g_last_change < G_LOWER_AFTER or l.tdp <= low:
+            return
+        # judged on the lowest G_WIN s average of the last G_LOWER_AFTER s
+        lowest = min(sum(s.g_hist[i:i + G_WIN]) / G_WIN for i in range(len(s.g_hist) - G_WIN + 1))
+        if lowest >= T * (1 + G_OVER):
+            # well over: to the watts aimed at G_AIM over the target, frames following watts
+            want = -(-int(l.tdp * T * (1 + G_AIM) / lowest * 10) // 10)
+            step = max(1, min(G_STEP_MAX, l.tdp - want))
+        elif lowest >= T - G_TOL_FPS and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY:
+            step = 1                                      # held at the target, GPU not maxed: a limit holds it, try 1 W
+        else:
+            return
+        w, was = max(low, l.tdp - step), l.tdp
+        if self._tdp(l, w):
+            s.g_drop_from, s.g_last_drop, s.g_last_change, s.g_hist = was, now, now, []
+            self._did(s, f"{lowest:.0f} fps at the lowest for {T:.0f}: lowered TDP to {w} W", f"−{was - w} W")
 
     def _cap(self, s: Session, fps: float, smp: Sample, now: float) -> float | None:
         """Target fps mode: the game's own frame cap under your target, or None. Found only at the full TDP, where
-        watts can't be what holds the game back: G_CAP_S seconds there, all under the target and within G_CAP_SPREAD of
-        their median, with PowerStation's GPU busy under G_BUSY. It lifts when G_WIN seconds average G_CAP_OFF over it
-        (a menu, the cap removed); every RESCAN_S under the full TDP, +G_RAISE_BIG W shows whether the game would now
-        run faster with the watts (an unlocked game held at the cap by the power alone never runs over it)."""
+        watts can't be what holds the game back: G_CAP_S seconds there, their median under the band and every one
+        within G_OVER of it, with PowerStation's GPU busy under G_BUSY. It lifts when G_WIN seconds average G_OVER over
+        it (a menu, the lock removed). Every RESCAN_S under the full TDP, G_LOWER_AFTER s at the full TDP show whether the
+        game would now run faster (an unlocked game held under the cap by the power alone never runs over it); if not,
+        the TDP goes straight back. +4 W used to be the check: from 8 W and 24 fps that gave 36, never over the band."""
         l, T, top = s.learned, float(s.target or 0), self._top(s)
         s.g_cap_hist.append(fps)
         del s.g_cap_hist[:-G_CAP_S]
         s.g_at_top = s.g_at_top + 1 if l.tdp >= top else 0
         cap = l.cap if l.cap and l.cap < T else None
         recent = s.g_cap_hist[-G_WIN:]
-        if cap and sum(recent) / len(recent) > cap * G_CAP_OFF:
-            self._did(s, f"{fps:.0f} fps, over the game's own {cap:.0f} fps cap: back to your {T:.0f} fps minimum",
+        if cap and len(recent) >= G_WIN and sum(recent) / len(recent) > cap * (1 + G_OVER):
+            self._did(s, f"{fps:.0f} fps, over the game's own {cap:.0f} fps cap: back to your {T:.0f} fps target",
                       "cap lifted")
-            l.cap = cap = None
-        elif cap and l.tdp < top and now - s.g_cap_at > RESCAN_S and now - s.g_last_change >= G_RAISE_GAP:
-            w, was = min(top, l.tdp + G_RAISE_BIG), l.tdp
-            if self._tdp(l, w):
+            l.cap = cap = s.g_probe_from = None
+            s.g_hold_until = 0.0
+        elif cap and s.g_probe_from is not None:
+            if now - s.g_cap_at >= G_LOWER_AFTER:           # the cap held at the full TDP: back to where it was
+                w, s.g_probe_from = s.g_probe_from, None
+                if self._tdp(l, w):
+                    s.g_last_change, s.g_hist = now, []
+                    self._did(s, f"the game's own {cap:.0f} fps cap holds: TDP back to {w} W", f"−{top - w} W")
+        elif cap and l.tdp < top and now - s.g_cap_at > RESCAN_S and now - s.g_last_change >= G_WIN:
+            s.g_probe_from = l.tdp
+            if self._tdp(l, top):
                 s.g_cap_at, s.g_last_change, s.g_hist = now, now, []
-                self._did(s, f"does the game's own {cap:.0f} fps cap still hold? TDP to {w} W", f"+{w - was} W")
-        elif (cap is None and s.g_at_top >= G_CAP_S and len(s.g_cap_hist) >= G_CAP_S and fps < T * G_AT
+                self._did(s, f"does the game's own {cap:.0f} fps cap still hold? TDP to {top} W",
+                          f"+{top - s.g_probe_from} W")
+        elif (cap is None and s.g_at_top >= G_CAP_S and len(s.g_cap_hist) >= G_CAP_S
               and smp.gpu_busy is not None and smp.gpu_busy < G_BUSY):
             mid = statistics.median(s.g_cap_hist)
-            # at least G_CAP_OFF under the target: a cap lifts at G_CAP_OFF over it, so one closer to the target can't
-            # be told from the game just missing it (Enshrouded steady at 59-60 for a 60 target, 2026-11-14)
-            if (MIN_TARGET <= mid <= T / G_CAP_OFF
-                    and all(abs(f - mid) <= mid * G_CAP_SPREAD for f in s.g_cap_hist)):
+            if MIN_TARGET <= mid < T - G_TOL_FPS and all(abs(f - mid) <= mid * G_OVER for f in s.g_cap_hist):
                 l.cap = cap = round(mid, 1)
                 s.g_cap_at, s.g_hist, s.g_maxed_since, s.unreachable = now, [], None, False
-                s.g_floor, s.g_floor_at = s.floor_tdp, now      # those misses were against your target, not the cap
+                s.g_last_drop, s.g_hold_until = None, 0.0
                 self._did(s, f"steady at {cap:.0f} fps at the full {top} W with the GPU idle part of the time: the "
                           f"game's own cap, held with the fewest watts", "cap")
         return cap
@@ -1167,6 +1132,6 @@ class Autotune:
                 "last_action": s.last_action, "last_delta": s.last_delta,
                 "target": None if s.target is None else round(s.target),
                 "unreachable": s.unreachable, "best_fps": r(s.best_fps),
-                "floor_learned": s.g_floor if s.phase == "target" and s.g_floor > s.floor_tdp else None, "fg": s.fg,
+                "fg": s.fg,
                 "last_change_s": None if s.last_change_at is None else round(time.monotonic() - s.last_change_at),
                 "last": None if last is None else last.__dict__}

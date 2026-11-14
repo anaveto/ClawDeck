@@ -52,22 +52,20 @@ sleep/wake several times fine.
 
 ## Needs the maintainer
 
-**Autotune target starts at your TDP and keeps your target (2026-11-12):** target mode started mid-range (22 W of a
-35 W pick), never went above the pick, lowered at 97 % of the target (and not at all in a power-bound game: the GPU
-is busy there), and Auto FPS replaced an out-of-reach target with what the full TDP gave (120 → 46 fps in
-Enshrouded), then took watts away to hold that. Now the target is a minimum (any second under it raises at once; lowering is judged
-on the lowest second of the last 12, not the average). It starts at the game's TDP, raises up to the model's maximum
-while under the target (straight to what the shortfall needs, no cap; every reading counts, fps under 35 % of the target is no longer skipped
-as "a menu"), lowers only while the lowest second is 20 % over the target and the fps after the step would still be
-3 % over it (or 1 W at a time at a frame limit with GPU headroom: fps vary, and 64 fps already counted as room for 60,
-so Enshrouded, which barely holds 60, was cut six times in 8 minutes), stays at the maximum when the target is out of reach (a miss at the
-maximum makes it the floor), holds a game's own frame cap under the target with the fewest watts (a PS3 game locked
-at 30 for a 60 target: found after 10 steady seconds at the maximum with the GPU idle part of the time, saved per game,
-lifted only at 20 % over it, rechecked +4 W every 20 minutes), and saves the TDP that held the target for 60 readings in
-a row as the game's own (not the TDP at exit: a quit menu at 400 fps lowers it). Auto FPS is gone. Check on the EX with
-a reachable target: start the game at 8 W (it climbs) and at 35 W (it comes down, never under the target); the next
-start is at the saved TDP. An out-of-reach target stays at 35 W. A 30 fps-locked game with a 60 target settles under
-35 W at 30 fps, and its next start begins there.
+**Autotune target holds your target with the fewest watts (2026-11-12, reworked 2026-11-14):** target mode started
+mid-range (22 W of a 35 W pick), never went above the pick, lowered at 97 % of the target (and not at all in a
+power-bound game), and Auto FPS replaced an out-of-reach target with what the full TDP gave (120 → 46 fps in
+Enshrouded). Now it holds the target, or the game's own lock under it, with the fewest watts, judged on 3 s averages
+(a 30 fps lock reads 28.6-30.4 second by second): more than one frame a second under gets watts at once, aimed 10 %
+over the target; watts come off only while the lowest average is 20 % over (64 fps counted as room for 60 and
+Enshrouded was cut six times in 8 minutes), or 1 W at a time while a frame limit or lock holds the target with the GPU
+not maxed. A step down that ends under goes straight back, and nothing goes under that TDP for 10 minutes; there is
+no floor (a 30 fps lock's own dips at 30 W had made 30 W one). A game steady under the target at the maximum with the
+GPU not maxed runs at its own lock (a PS3 game at 30 for a 60 target): found after 10 s, saved per game, lifted at
+20 % over it, checked every 20 minutes at the maximum. It starts at the game's TDP and saves the TDP that held the
+target for 60 readings as the game's own. Auto FPS is gone. Check on the EX: start a game at 8 W (it climbs) and at
+35 W (it comes down, never under the target); Enshrouded at 60 keeps its watts; a 30 fps-locked game settles well
+under 35 W at 30 fps, and its next start begins there.
 
 **XeSS XMX package 20261111 (2026-11-10):** pinned without waiting (maintainer's word for HHHHanasak1's releases).
 New on the EX (Xe3): install.sh's default is "stock mode", the package's unpatched Mesa 26.3 plus its Vulkan layer,
