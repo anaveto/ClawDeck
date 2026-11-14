@@ -111,7 +111,7 @@ def test_six_profiles_step_up_in_power():
         tdps = [table[n]["tdp"] for n in table]
         assert tdps == [10, 12, 17, 25, 30, 35]
     assert hw.profile_name("dock") == "max"                        # a saved "dock" from an earlier version still works
-    assert hw.tdp_range(hw.MODELS["MS-1T91"]) == (8, 35)
+    assert hw.tdp_range(hw.MODELS["MS-1T91"]) == (8, 30)
 
 
 def test_balanced_profile_applies(fake_hw):
@@ -250,7 +250,7 @@ def test_cpu_boost_lever_and_profile(fake_hw):
     assert pw.turbo() is True
     r = pw.apply_profile("dock")                                   # alias of max
     assert r["profile"] == "max" and r["applied"]["cpu_max_pct"] == 100
-    assert pw.status()["range"] == {"min": 8, "max": 35}
+    assert pw.status()["range"] == {"min": 8, "max": 30}
 
 
 def test_gpu_floor_reset_keeps_a_user_ceiling(fake_hw):
@@ -997,15 +997,15 @@ def test_never_picked_on_this_power_source_leaves_the_firmware_and_thermald(plug
 
 def test_status_shows_your_limit_and_what_autotune_uses(plugin):
     p = plugin
-    p.settings["last_profile_battery"] = "max"                     # 35 W
+    p.settings["last_profile_battery"] = "max"                     # 35 W in the table, the Claw 8 EX's 30 W here
     p.run(p.game_started("42"))
     s = _lower(p)
     at = p.run(p.get_autotune())
     st = p.run(p.get_power())
     slot = p.run(p.power_slot("42"))
-    assert at["ceiling_tdp"] == 35 and at["tdp"] == s.learned.tdp < 35 and at["plugged"] is False
-    assert st["limit_w"] == 35 and st["autotune_w"] == at["tdp"] == st["tdp_w"]
-    assert slot["pick"] == {"profile": "max", "tdp": 35, "from": "last"} and slot["running"]
+    assert at["ceiling_tdp"] == 30 and at["tdp"] == s.learned.tdp < 30 and at["plugged"] is False
+    assert st["limit_w"] == 30 and st["autotune_w"] == at["tdp"] == st["tdp_w"]
+    assert slot["pick"] == {"profile": "max", "tdp": 30, "from": "last"} and slot["running"]
 
 
 def test_a_pick_in_a_game_is_the_new_limit_at_once_and_comes_back_at_the_next_start(plugin):
@@ -1056,10 +1056,10 @@ def test_unplugging_during_and_after_a_game_follows_each_power_sources_pick(plug
     p.autotune.session.settled = True                              # it finished learning on battery
     p.ac["plugged"] = True
     r = p.run(p.power_source_changed(True))
-    assert r["changed"] and p.chip() == 35 and p.autotune.session.ceiling_tdp == 35 and p.autotune.plugged
+    assert r["changed"] and p.chip() == 30 and p.autotune.session.ceiling_tdp == 30 and p.autotune.plugged
     assert p.profiles.own("42", False).get("learned")              # battery's learning kept in its own slot
     p.run(p.game_stopped("42"))
-    assert p.chip() == 35                                          # exit on the charger: the plugged-in pick
+    assert p.chip() == 30                                          # exit on the charger: the plugged-in pick
     p.ac["plugged"] = False
     r = p.run(p.power_source_changed(False))
     assert r["changed"] and p.chip() == 20                         # unplugged with no game: the battery pick
@@ -1730,7 +1730,7 @@ def test_autotune_target_setting_is_saved_clamped_and_reaches_the_running_sessio
 
 def test_target_raises_above_your_tdp_and_saves_where_it_settles_for_the_next_start(plugin, monkeypatch):
     """Your TDP is where target mode starts, not its cap: from 8 W it climbs to what the 60 fps target needs (up to
-    the model's 35 W), and the TDP it settles on is the game's own TDP at its next start (maintainer, 2026-11-12)."""
+    the model's 30 W), and the TDP it settles on is the game's own TDP at its next start (maintainer, 2026-11-12)."""
     p = plugin
     clock = {"t": 1000.0}
     monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
@@ -1738,7 +1738,7 @@ def test_target_raises_above_your_tdp_and_saves_where_it_settles_for_the_next_st
     p.run(p.set_tdp(8))                                            # the slider in the menus: 8 W
     p.run(p.game_started("42"))
     s = p.autotune.session
-    assert p.chip() == 8 and s.ceiling_tdp == 8 and s.max_tdp == 35 and s.phase == "target"
+    assert p.chip() == 8 and s.ceiling_tdp == 8 and s.max_tdp == 30 and s.phase == "target"
     _BusyGame(p.autotune, 3.0)                                     # 20 W gives 60
     for _ in range(120):
         clock["t"] += 1
