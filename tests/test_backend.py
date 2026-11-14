@@ -1813,6 +1813,31 @@ def test_target_two_seconds_under_get_watts(fake_hw, monkeypatch):
     at.session = None
 
 
+def test_target_frames_lost_well_under_the_limit_are_not_the_limits(fake_hw, monkeypatch):
+    """Frames lost while the chip draws well under the TDP get no watts and don't take a step down back (Midnight Club 3
+    on PCSX2: 24 fps for a second at 26 W while drawing 10.7 W went back to 27 W for 10 minutes). The same under with
+    the chip at the limit goes back."""
+    at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=20)
+    s.max_tdp = 35
+    now = {"fps": 30.0}
+    game = _Game(at, lambda *_: now["fps"], gpu_busy=40, pkg_w=8.0)    # a 30 fps lock the GPU and the limit don't hold
+    for _ in range(30):
+        run(1)
+        if s.learned.tdp < 20:
+            break
+    assert s.learned.tdp == 19 and "lowered TDP to 19 W" in s.last_action
+    now["fps"] = 24.0
+    run(3)
+    assert s.learned.tdp == 19 and "back to" not in s.last_action
+    now["fps"] = 30.0
+    run(2)
+    game.smp["pkg_w"] = 19.0                                       # now at the limit
+    now["fps"] = 24.0
+    run(2)
+    assert s.learned.tdp == 20 and "back to 20 W" in s.last_action
+    at.session = None
+
+
 def test_target_saves_the_tdp_that_held_not_a_quit_menus(fake_hw, monkeypatch):
     """A TDP holds the target after G_SETTLE_S readings in a row at it; a 400 fps quit menu that lowers it after
     that doesn't change what is saved."""
