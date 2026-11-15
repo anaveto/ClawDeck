@@ -52,6 +52,12 @@ sleep/wake several times fine.
 
 ## Needs the maintainer
 
+**Autotune stays out of xemu (2026-11-14):** xemu presents 60 fps whatever the emulated game does (Project Gotham
+Racing 2 at 16 W: 16-18 game fps, 60 shown), and under its own draw (~20 W) the game slows. 3, 10 and 30 s into a game
+Autotune looks for an `xemu` process; if one runs, the pick goes back on the chip and Autotune stays out. Check on the
+EX: Autotune on, start an Xbox game from ES-DE: within 30 s the Power line says "Autotune stays out of xemu" and the
+TDP is the pick.
+
 **Autotune without a frame rate gives your limit back (2026-11-12):** a game whose frame rate autotune can't read
 (no XeSS/XeLL, no MangoHud log) used to keep autotune's starting point after it gave up, so a target's mid-range start
 (22 W of a 35 W pick) stayed for the whole game: Enshrouded ran at 30-40 fps instead of 60 until autotune was switched
