@@ -1,0 +1,35 @@
+name: cabinet-lzms Wine test on several systems (test only)
+on:
+  push:
+    branches: [ci/wine-matrix]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ubuntu-26.04, os: ubuntu-26.04, container: '', install: apt }
+          - { name: ubuntu-24.04, os: ubuntu-24.04, container: '', install: apt }
+          - { name: fedora-43 wine, os: ubuntu-latest, container: 'registry.fedoraproject.org/fedora:43', install: 'wine' }
+          - { name: fedora-43 wine-core only, os: ubuntu-latest, container: 'registry.fedoraproject.org/fedora:43', install: 'wine-core wine-filesystem' }
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain and Wine
+        timeout-minutes: 8
+        run: |
+          if [ "${{ matrix.install }}" = apt ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 wine wine64 libwine libwim-dev
+          else
+            dnf -y install mingw64-gcc wimlib-devel gcc procps-ng findutils ${{ matrix.install }} >/dev/null
+            rpm -q wine-core wine-common || true
+          fi
+          wine --version
+      - run: tools/cabinet-lzms/build.sh
+      - name: test under Wine
+        timeout-minutes: 6
+        run: tools/cabinet-lzms/test/run.sh
