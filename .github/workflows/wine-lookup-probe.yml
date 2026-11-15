@@ -1,0 +1,27 @@
+name: Wine cabinet.dll lookup probe (test only)
+on:
+  push:
+    branches: [ci/wine-lookup-probe]
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ubuntu-26.04, os: ubuntu-26.04, container: '' }
+          - { name: ubuntu-24.04, os: ubuntu-24.04, container: '' }
+          - { name: fedora-43, os: ubuntu-latest, container: 'registry.fedoraproject.org/fedora:43' }
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wine
+        timeout-minutes: 8
+        run: |
+          if command -v dnf >/dev/null; then dnf -y install wine procps-ng findutils bc >/dev/null
+          else sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends wine wine64 libwine bc >/dev/null; fi
+      - name: probe
+        timeout-minutes: 8
+        run: .github/wine-debug/lookup.sh
