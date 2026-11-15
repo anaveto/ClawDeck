@@ -1994,6 +1994,42 @@ def test_target_with_a_frame_limit_at_the_target_lowers_while_the_gpu_has_headro
     assert s.learned.tdp == 12 and s.last_change_at == changes   # the GPU is busy at 12 W
     at.session = None
 
+def test_a_new_target_leaves_xemu_alone(fake_hw, monkeypatch, tmp_path):
+    """set_target() ended every pause, also the one for xemu: Autotune governed the game again on xemu's 60 presented
+    fps and took the TDP from the 30 W pick to the 8 W floor within two minutes."""
+    pw = power.Power(fake_hw)
+    chip = {}
+    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: chip.update(tdp=w) or True)
+    at = autotune.Autotune(fake_hw, pw, "/nonexistent")
+    monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
+    proc = tmp_path / "proc"
+    for pid, name in (("1", "systemd"), ("4242", "es-de"), ("4300", "xemu")):
+        _w(str(proc / pid / "comm"), name)
+    monkeypatch.setattr(autotune, "PROC", str(proc))
+    pw.apply_profile("", {"tdp": 30}, False)                          # the pick: Custom 30 W
+    at.start("3119184808#xbox/Project Gotham Racing 2", None, 8, 30, False, target=60)
+    at.sampler.sample = lambda: autotune.Sample(t=clock["t"], frametime_ms=16.7, fps=60.0, gpu_mhz=1000,
+                                                gpu_max_mhz=2400, cpu_pct=30, pkg_w=19.0, gpu_busy=40,
+                                                source="presented", shown_fps=None)
+
+    def run(n):
+        for _ in range(n):
+            clock["t"] += 1
+            at._step()
+    run(10)
+    assert at.status()["own_pace"] == "xemu" and at.session.paused and chip["tdp"] == 30
+    at.set_target(30)                                                 # a new target in the panel
+    run(120)
+    st = at.status()
+    assert st["own_pace"] == "xemu" and st["paused"] and chip["tdp"] == 30
+    at.set_target(None)                                               # the target switched off: the same
+    run(120)
+    assert at.session.paused and chip["tdp"] == 30
+    at.session = None
+
+
 def test_target_a_step_down_that_misses_goes_back_and_waits_before_trying_again(fake_hw, monkeypatch):
     """No floor: a step down that ends under the target goes straight back. After a 2 W step it goes on 1 W at a time;
     after a 1 W step nothing goes under that TDP for G_HOLD_S, then it tries again (the scene may be lighter), and each
