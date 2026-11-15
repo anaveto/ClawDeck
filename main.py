@@ -204,6 +204,7 @@ class Plugin:
         if getattr(self, "_frontend_watch", None):
             self._watch_frontend(False)
         self.autotune.stop()
+        self.autotune.release_frames()
         quiet.background(False)
         n = self.power.revert_all()
         if self.settings.get("sdr_nits") is not None and self._caps().get("hdr_brightness"):
@@ -950,6 +951,7 @@ class Plugin:
         async with self._power_lock:
             plugged = self.running_plugged if self.running_plugged is not None else bool(self.battery.plugged())
             learned = self._save_learned(self._game_key(), plugged)
+            self.autotune.release_frames()
             self.running_appid, self.running_plugged = None, None
             self.running_key, self.running_title = None, None
             self._watch_frontend(False)

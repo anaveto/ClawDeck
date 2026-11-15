@@ -215,6 +215,12 @@ class Sampler:
         self._log = max(files, key=mtime) if files else None
         return self._log
 
+    def release(self) -> None:
+        """The game (the Steam app) ended: a mangoapp log Autotune turned on goes off."""
+        if self._mango_own:
+            mangoapp_command("logging=0")
+        self._mango, self._mango_pos, self._mango_own, self._mango_asked = None, 0, False, -1e9
+
     def frametime(self) -> tuple[float | None, float | None]:
         f = self._newest_log()
         if not f:
@@ -311,12 +317,14 @@ class Sampler:
 
     def set_prefix(self, xell_log: str | None) -> None:
         """The game's prefix log where the shim writes XeLL's frame timing; read from its end, new lines only. A game
-        starts here: MangoHud logs from before now are not its frames. None: the game ended (a mangoapp log Autotune
-        turned on goes off)."""
-        if self._mango_own:
-            mangoapp_command("logging=0")
-        self._mango, self._mango_pos, self._mango_own, self._mango_asked = None, 0, False, -1e9
-        self._mango_checked, self._mango_row_at = -1e9, time.monotonic()
+        starts here: MangoHud logs from before now are not its frames. mangoapp's log stays on: a new session can come
+        inside the running app (an ES-DE game, a new power source), and turning the log off there cuts its frames for
+        MANGOAPP_RELOG_S and the log of every other reader. release() turns it off when the app ends."""
+        try:
+            self._mango_pos = os.path.getsize(self._mango) if self._mango else 0
+        except OSError:
+            self._mango, self._mango_pos = None, 0
+        self._mango_asked, self._mango_checked, self._mango_row_at = -1e9, -1e9, time.monotonic()
         self.xell_log, self._xell = xell_log, None
         self._since, self._log = (time.time() - 2, None) if xell_log else (0.0, None)
         try:
@@ -739,6 +747,11 @@ class Autotune:
 
     def running(self) -> bool:
         return self.session is not None
+
+    def release_frames(self) -> None:
+        """The game (the Steam app) ended: the mangoapp log Autotune turned on goes off. A session that ends inside the
+        running app (an ES-DE game, a new power source) leaves it on for the next one."""
+        self.sampler.release()
 
     def stop(self, revert: bool = True) -> dict | None:
         """End the session; what it learned is returned for the game's profile. revert=False leaves the power as it is
