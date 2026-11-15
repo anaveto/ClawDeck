@@ -728,10 +728,19 @@ class Autotune:
     def thermal_release(self, watts: int) -> bool:
         """The package cooled down: the guard lets autotune use up to `watts` again (the set TDP: the step is gone and
         autotune measures again what the full TDP gives). Autotune's own TDP isn't raised here; it climbs if the game
-        needs it (hold: +1 W below the line), or starts over at the full TDP."""
+        needs it (hold: +1 W below the line), or starts over at the full TDP. A paused autotune (xemu, no frame rate,
+        a manual change) never climbs: there the TDP itself goes back up with the guard, as for a game without
+        autotune. It stayed at the guard's step for the rest of the game otherwise."""
         s = self.session
         if not s or s.thermal_cap is None:
             return False
+        if s.paused:
+            cap, s.thermal_cap = s.thermal_cap, None if watts >= s.ceiling_tdp else int(watts)
+            if not self._tdp(s.learned, min(int(watts), s.ceiling_tdp)):
+                s.thermal_cap = cap                       # not applied: the guard tries this step again
+                return False
+            self._did(s, f"thermal: cooled, back up to {s.learned.tdp} W", "thermal")
+            return True
         if watts >= self._max(s):
             s.thermal_cap = None
             if s.phase == "target":                       # it climbs again by itself if the target needs it
@@ -752,8 +761,9 @@ class Autotune:
         return self._max(s) if s.thermal_cap is None else min(self._max(s), s.thermal_cap)
 
     def limit_w(self) -> int | None:
-        """Where the temperature guard's steps back up stop (main.py)."""
-        return self._max(self.session) if self.session else None
+        """Where the temperature guard's steps back up stop (main.py): the pick while autotune is paused."""
+        s = self.session
+        return None if not s else s.ceiling_tdp if s.paused else self._max(s)
 
     def pause(self, reason: str = "manual change") -> None:
         """Never fight the user: a manual power change stops autotune for the rest of this session (values the user
