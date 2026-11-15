@@ -1,0 +1,26 @@
+name: Wine first start in a fresh prefix, instrumented (test only)
+on:
+  push:
+    branches: [ci/wine-fedora-debug]
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: fedora-43, os: ubuntu-latest, container: 'registry.fedoraproject.org/fedora:43' }
+          - { name: ubuntu-26.04, os: ubuntu-26.04, container: '' }
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wine
+        timeout-minutes: 5
+        run: |
+          if command -v dnf >/dev/null; then dnf -y install wine-core wine-filesystem procps-ng findutils >/dev/null
+          else sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends wine wine64 libwine >/dev/null; fi
+      - name: probe
+        timeout-minutes: 8
+        run: .github/wine-debug/probe.sh
