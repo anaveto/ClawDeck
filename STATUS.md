@@ -58,6 +58,15 @@ Autotune looks for an `xemu` process; if one runs, the pick goes back on the chi
 EX: Autotune on, start an Xbox game from ES-DE: within 30 s the Power line says "Autotune stays out of xemu" and the
 TDP is the pick.
 
+**Temperature guard: CPU clock for a hot spot, watts from the draw (2026-11-14):** in xemu two busy threads held the
+package at 95-97 °C at ~20 W under a 30 W limit; the guard stepped the TDP 2 W every 10 s from 30 W, nothing happened
+until it was under 20 W, PL1's window hid the next steps, and it reached 10 W in 90 s (the game at a third of its speed).
+Now a hot spot under the limit gets the CPU's top clock (-10 % per check, not under 60 %), the TDP steps from what the
+package draws, and the next watts step waits until the package came down to the last one; the clock comes back first.
+Check on the EX: an xemu game (or two busy threads on cpu0-1) with Autotune off: over 95 °C the Power line says
+"thermal: CPU clock 90 %" and the TDP stays at the pick; the game keeps its speed.
+
+
 **Autotune without a frame rate gives your limit back (2026-11-12):** a game whose frame rate autotune can't read
 (no XeSS/XeLL, no MangoHud log) used to keep autotune's starting point after it gave up, so a target's mid-range start
 (22 W of a 35 W pick) stayed for the whole game: Enshrouded ran at 30-40 fps instead of 60 until autotune was switched
