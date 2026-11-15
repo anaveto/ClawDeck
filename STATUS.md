@@ -53,6 +53,24 @@ sleep/wake several times fine.
 
 ## Needs the maintainer
 
+**Autotune target holds your target with the fewest watts (2026-11-12, reworked 2026-11-14):** target mode started
+mid-range (22 W of a 35 W pick), never went above the pick, lowered at 97 % of the target (and not at all in a
+power-bound game), and Auto FPS replaced an out-of-reach target with what the full TDP gave (120 → 46 fps in
+Enshrouded). Now it holds the target, or the game's own lock under it, with the fewest watts, judged on averages (a 30
+fps lock reads 28.6-30.4 second by second): a 2 s average and the last second more than 5 % under (57 fps for 60) get
+watts at once, aimed 10 % over the target, but only while the chip runs at the limit (package at 85 % of the TDP or
+more: frames lost well under it aren't the limit's); watts come off only while the lowest average is 20 % over (64 fps
+counted as room for 60 and Enshrouded was cut six times in 8 minutes), or in steps of 1, 2, 4, then 6 W (1 W near the
+edge; after raises, straight back to where it held before) while a frame limit or lock holds the target with the GPU not
+maxed (straight to just over what the chip draws while it stays well under the TDP). A step down that ends under goes
+straight back; after a 1 W step nothing goes under that TDP for 1 minute, doubling for each further under there up to 10
+minutes; there is no floor (a 30 fps lock's own dips at 30 W had made 30 W one). A game steady under the target at the
+maximum, or with the chip well under the TDP, with the GPU not maxed runs at its own lock (a PS3 game at 30 for a 60
+target): found after 10 s, saved per game, lifted at 20 % over it, checked every 20 minutes at the maximum. It starts at
+the game's TDP and saves the TDP that held the target for 60 readings as the game's own. Auto FPS is gone. Check on the
+EX: start a game at 8 W (it climbs) and at 35 W (it comes down, never under the target); Enshrouded at 60 keeps its
+watts; a 30 fps-locked game settles well under 35 W at 30 fps, and its next start begins there.
+
 **Autotune reads frames from mangoapp (2026-11-14):** a game without its own MangoHud log (no launch wrapper: xemu's
 Flatpak, a game started another way) gave Autotune no frame rate ("no frame rate after 30 s"). Now it follows
 mangoapp's per-frame log (Steam's overlay, fed every frame of the focused app): a running one is only read; else
@@ -149,12 +167,12 @@ the shim trace and OptiScaler's lines; start again and check OptiScaler.ini is b
 Remove takes it out (no cold boot needed for him, but he already had MSI's firmware loaded). Still worth a run on the
 maintainer's EX from stock (firmware never loaded before): Install -> cold boot -> gyro in Steam -> Remove.
 
-**Autotune target fps + faster recovery (2026-11-08):** not run on the Claw yet. Target mode (Power → Autotune target,
-Auto FPS) follows DeckyTDPTuner's governor; most-frames mode now raises at once when a heavy scene drops clearly under
+**Autotune target fps + faster recovery (2026-11-08):** not run on the Claw yet. Target mode (Power → Autotune target)
+follows DeckyTDPTuner's governor; most-frames mode now raises at once when a heavy scene drops clearly under
 its line (RE4 report: Autotune lowered the TDP in a calm scene, then took minutes to come back). Check: RE4 or CONTROL,
 target 40 and 60 with Steam's frame limit at the same number: watts settle within a few minutes, a heavy fight gets
 watts back within ~5 s, no saw-tooth; with frame generation (2x) the target counts rendered frames. An out-of-reach
-target (60 at 12 W) drops to the closest after a minute with Auto FPS on; off, it stays at the full TDP.
+target (60 at 12 W) stays at the full TDP and says so after a minute.
 
 **MSI BIOS check (2026-11-07):** Setup's checks show "MSI BIOS up to date" or "MSI has BIOS E1T91IMS.10E
 (2026-10-30); this Claw runs E1T91IMS.10D …" with MSI's support link. The sandbox can't reach msi.com, so check the
