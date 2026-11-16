@@ -8,15 +8,18 @@ temperature (the x86_pkg_temp thermal zone, coretemp as a fallback; hw.find_pkg_
   while tripped  -> another step every CHECK_S until the package is under CLEAR_C:
                     a hot spot (the package draws well under the TDP: a few busy cores at their top clock, e.g. xemu's
                     two threads at 95-97 °C and ~20 W under 30 W) -> the CPU's top clock -CLOCK_STEP_PCT, not under
-                    CLOCK_FLOOR_PCT; a lower TDP would do nothing until it is under the draw, then slow everything;
+                    CLOCK_FLOOR_PCT; a lower TDP would do nothing until it is under the draw, then slow everything.
+                    No further clock step while the last one shows (under TRIP_C and cooler than at the check before);
                     otherwise -> the TDP, STEP_W under what the package draws (not under the TDP that was set, which
                     can be far above the draw), never below the floor, and the next watts step only once the package
                     has come down to the last one (PL1 is averaged over up to a minute: steps every 10 s took xemu
                     from 30 W to 10 W in 90 s before the first one showed, 2026-11-14).
 
-  stepped, cool  -> under RECOVER_C for RECOVER_CHECKS checks in a row: the CPU clock back up CLOCK_STEP_PCT, then
-                    +STEP_W back toward your limit, again every RECOVER_CHECKS checks, until both are back (then the
-                    step is gone).
+  stepped, cool  -> under RECOVER_C: the CPU clock back up CLOCK_STEP_PCT per check (a clock cap acts within a
+                    second, and so does its release); a trip within RETRIP_S of such a step doubles the cool checks the
+                    next one waits for (up to CLOCK_COOL_MAX), a trip later than that starts with one again. Then,
+                    under RECOVER_C for RECOVER_CHECKS checks in a row, +STEP_W back toward your limit, again every
+                    RECOVER_CHECKS checks, until both are back (then the step is gone).
 
 It used to stay stepped until a new pick or the game closed: one hot minute at 35 W left the Claw at 21 W for the rest
 of the session at 55 °C (maintainer, 2026-11-04). Autotune works under the stepped TDP while it runs. The SoC's own limit (TCC) and the EC's fan
@@ -45,6 +48,11 @@ RECOVER_C = 80.0        # well under the trip: a step back up only once the pack
 RECOVER_CHECKS = 3      # ... for 30 s, and the next step 30 s after that (so it doesn't bounce off TRIP_C)
 CLOCK_STEP_PCT = 10     # a hot spot: the CPU's top clock, 10 % of its maximum at a time
 CLOCK_FLOOR_PCT = 60    # ... not under 60 % (then the TDP, from the draw)
+CLOCK_COOL_CHECKS = 1   # the clock comes back a step after this many cool checks. Three per step kept Project Gotham
+                        # Racing 2 in xemu capped for 176 of 233 s after one hot half minute: 68-77 °C within 20 s of the
+                        # last step down, the cap gone 140 s later, the race at 27.0 instead of 28.2 fps (2026-11-16)
+RETRIP_S = 60           # a trip this soon after the clock came back a step: it came back too early. The next step back
+CLOCK_COOL_MAX = 30     # waits for twice as many cool checks, each time, up to this many (5 min)
 
 
 CSV_FIELDS = ["time", "pkg_c", "pkg_w", "tdp_w", "stepped_w", "fan_mode", "fan1_rpm", "fan2_rpm"]
@@ -105,6 +113,9 @@ class Guard:
         self.draw_w: float | None = None      # what the package drew since the last check (RAPL energy)
         self.stepped_at: float | None = None
         self.cool = 0                         # checks in a row under RECOVER_C while stepped
+        self.last_c: float | None = None      # the temperature at the check before
+        self.clock_cool = CLOCK_COOL_CHECKS   # cool checks before the clock comes back a step
+        self.raised_at: float | None = None   # when it last came back a step
         self._last_energy: tuple[float, int] | None = None
 
     def _draw(self) -> float | None:
@@ -124,6 +135,7 @@ class Guard:
         limit_w: your limit, where stepping back up stops; raise_tdp: how to go back up (default set_tdp);
         set_clock: caps the CPU's top clock at a % (None: the cap goes), for a hot spot."""
         t = read_c(self.path)
+        last, self.last_c = self.last_c, t
         self.temp_c = t
         draw = self.draw_w = self._draw()
         if t is None or current_w is None:
@@ -132,6 +144,8 @@ class Guard:
             if t <= TRIP_C:
                 return self._recover(t, current_w, limit_w, raise_tdp or set_tdp, set_clock)
             self.tripped = True
+            early = self.raised_at is not None and time.monotonic() - self.raised_at <= RETRIP_S
+            self.clock_cool = min(CLOCK_COOL_MAX, self.clock_cool * 2) if early else CLOCK_COOL_CHECKS
             log.warning("package %.0f °C (over %.0f °C) while thermald is paused: stepping down", t, TRIP_C)
         if t < CLEAR_C:
             self.tripped = False
@@ -139,6 +153,8 @@ class Guard:
             return None
         clock = self.clock_pct or 100
         if draw is not None and draw < current_w - STEP_W and set_clock is not None and clock > CLOCK_FLOOR_PCT:
+            if self.clock_pct is not None and t <= TRIP_C and last is not None and t < last:
+                return None                                  # the last clock step shows: no further one on top of it
             pct = max(CLOCK_FLOOR_PCT, clock - CLOCK_STEP_PCT)
             if not set_clock(pct):
                 log.warning("thermal guard: CPU clock cap %d %% was not applied", pct)
@@ -167,15 +183,16 @@ class Guard:
             self.cool = 0
             return None
         self.cool += 1
-        if self.cool < RECOVER_CHECKS:
+        clock = self.clock_pct is not None and set_clock is not None  # the clock first, then the watts
+        if self.cool < (self.clock_cool if clock else RECOVER_CHECKS):
             return None
         self.cool = 0
-        if self.clock_pct is not None and set_clock is not None:      # the clock first, then the watts
+        if clock:
             pct = self.clock_pct + CLOCK_STEP_PCT
             if not set_clock(None if pct >= 100 else pct):
                 log.warning("thermal guard: CPU clock back to %d %% was not applied", min(pct, 100))
                 return None
-            self.clock_pct = None if pct >= 100 else pct
+            self.clock_pct, self.raised_at = (None if pct >= 100 else pct), time.monotonic()
             log.info("thermal: package %.0f °C, CPU clock %s", t, "uncapped" if pct >= 100 else f"capped at {pct} %")
             if self.clock_pct is None and self.stepped_w is None:
                 self.stepped_at = None
@@ -198,6 +215,7 @@ class Guard:
         """The user set a TDP, or the power was reverted: the guard's steps no longer apply (main.py takes the CPU
         clock cap off with them)."""
         self.tripped, self.stepped_w, self.clock_pct, self.stepped_at, self.cool = False, None, None, None, 0
+        self.last_c, self.clock_cool, self.raised_at = None, CLOCK_COOL_CHECKS, None
 
     def status(self) -> dict:
         parts = ([f"stepped to {self.stepped_w} W"] if self.stepped_w is not None else []) + \
