@@ -171,6 +171,9 @@ export const PowerTab: FC<{ quick?: boolean }> = ({ quick }) => {
 
   const running = !!at?.running && !at.paused;
   const governs = !!st?.autotune_governs;
+  const lasts = (w: number) => { const m = st?.battery_minutes?.[w]; return m == null ? undefined : `about ${m >= 60 ? `${Math.floor(m / 60)} h ` : ""}${m % 60} min`; };
+  const timed = (name: string, w: number) => (lasts(w) ? <>{name}<br /><span style={{ fontSize: 12, color: "#b8bcbf" }}>{lasts(w)} on this charge</span></> : name);
+  const onCharge = (w: number) => (lasts(w) ? `this charge lasts ${lasts(w)} with the game drawing all ${w} W, longer when it draws less; ` : "");
   const [atMaxV, setAtMaxV] = useState<number | null>(null);
   useEffect(() => setAtMaxV(null), [st?.autotune_max]);
   const atMax = atMaxV ?? st?.autotune_max ?? tdp;
@@ -210,11 +213,11 @@ export const PowerTab: FC<{ quick?: boolean }> = ({ quick }) => {
           selectedOption={profile} onChange={(o) => { markPick("power"); pick(o.data); }} rgOptions={profileOptions}
           description={explain(custom ? "Your own limit, from the slider below." : `${picked?.short}: ${picked?.does}.`,
             quick ? undefined : "the most power the game may use; Autotune saves below it.", quick || custom ? undefined : picked?.cost)} /></Anchor>
-        <Anchor id="tdp"><SliderField label="TDP (W)" value={tdp} min={lo} max={hi} step={1} showValue disabled={!st?.tdp_backend || governs} onChange={(w) => { markPick("tdp"); slide(w); }}
+        <Anchor id="tdp"><SliderField label={governs ? "TDP (W)" : timed("TDP (W)", tdp)} value={tdp} min={lo} max={hi} step={1} showValue disabled={!st?.tdp_backend || governs} onChange={(w) => { markPick("tdp"); slide(w); }}
           description={governs ? "Autotune is on, so set an FPS target and a wattage limit in the Autotune section."
             : explain(`The power CPU and graphics share, ${lo}–${hi} W. Moving it makes a Custom profile.`,
               quick ? undefined : "Steam's TDP slider does nothing on the Claw 8 EX (PowerStation reports no TDP range for this chip), so ClawDeck sets the chip's own limit." + rapl25,
-              quick ? undefined : "each watt more buys fps with play time and heat.")} /></Anchor>
+              quick ? undefined : onCharge(tdp) + "each watt more buys fps with play time and heat.")} /></Anchor>
         {custom && <ToggleField label="Set PL2 yourself" checked={!!st?.pl2_manual}
           description={explain(st?.pl2_manual ? "PL2, the short-burst limit, is the slider below instead of your TDP + 2 W." : `PL2, the short-burst limit, follows ${governs ? "Autotune's max TDP" : "your TDP"}: ${(governs ? atMax : tdp) + 2} W (TDP + 2 W, as Handheld Daemon and PowerControl do).`,
             "a higher PL2 gives the CPU and graphics short bursts above the TDP: snappier loading, more heat, and frame times can get less even.")}
@@ -252,10 +255,10 @@ export const PowerTab: FC<{ quick?: boolean }> = ({ quick }) => {
               quick ? undefined : `${TARGETS[TARGETS.length - 1].data} fps with Auto FPS: nearly the most frames the max TDP below gives.`, undefined)} />
         )}
         {autotune && (
-          <SliderField label="Autotune max TDP (W)" value={atMax} min={lo} max={hi} step={1} showValue disabled={!st?.tdp_backend}
+          <SliderField label={timed("Autotune max TDP (W)", atMax)} value={atMax} min={lo} max={hi} step={1} showValue disabled={!st?.tdp_backend}
             onChange={(w) => { setAtMaxV(w); latest("atmax", () => setAutotuneMax(w), (r) => { toast(r.summary); refresh(); }); }}
             description={explain(`The most watts Autotune may use to hold ${st?.autotune_target} fps, ${lo}–${hi} W. Until moved, it is your TDP setting.`,
-              undefined, quick ? undefined : "each watt more buys fps with play time and heat.")} />
+              undefined, quick ? undefined : onCharge(atMax) + "each watt more buys fps with play time and heat.")} />
         )}
         {autotune && (
           <ToggleField label="Auto FPS" checked={st?.autotune_auto_fps ?? true}

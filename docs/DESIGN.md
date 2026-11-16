@@ -135,6 +135,17 @@ chip. The maximum is never saved as a TDP setting, and Autotune never changes it
 automatic TDP in three of four projects read; its default from the manual TDP is Handheld Companion's rule; none greys
 the manual TDP out (the user's design).
 
+**Battery time.** On battery, the TDP slider and Autotune's maximum show on a second line of their label how long the
+charge lasts at their wattage ("about 3 h 20 min on this charge"; on one line it took the room of the value in Quick
+Access), and their cost line says what the number means. `battery.minutes`: the Wh left (`charge_now` x the design
+voltage, as UPower counts a battery without `energy_*`) over what the whole machine draws with the package at that
+wattage (`hw.MODELS` → `system_w`, measured: HARDWARE-FINDINGS §25), down to 5 minutes; `get_power` returns it for
+each watt of the slider as `battery_minutes`. It is the time for a game that draws all of its limit (about: 3 % more
+draw was measured at the limit); a game that draws less lasts longer. Not shown on the charger, on a model without a
+measured line, or on the TDP slider while Autotune governs (the TDP setting does nothing then). Precedent: UPower and
+MangoHud divide the charge left by the present draw; no handheld tool that was found shows the time at a chosen
+wattage.
+
 **A TDP setting and what Autotune learned are two records, and only the user writes a TDP setting.** A game's slot (per
 power source) has `base` and `tdp` (the setting) and `learned` (Autotune's record: `start`, the limit and target it was
 found under). `base` and `tdp` are written in three places, each a user action: `set_tdp` (the slider), `apply_profile`

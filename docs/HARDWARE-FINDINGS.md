@@ -459,3 +459,31 @@ limit costs there.
 **So:** only the frames' answer to a change of the limit tells a limit that is too low from a heavy scene, that
 answer comes within a third of a second, and what a game needs moves within seconds. `governor.py` is built on those
 three (DESIGN.md → Autotune governor).
+
+## 25. What the whole Claw draws at a package draw (Claw 8 EX, 2026-11-14 to 16) — the ground of the battery time
+
+A recorder wrote one row a second for three days: the package's watts (RAPL energy counter) and, on battery, BAT1's
+current x voltage (the 16-bit current error of §6 put right). Minute means, because the battery's current reading
+lags the package's by seconds: 505 whole minutes on battery, 200 of them with the package at 8 W or more (Enshrouded
+54, RPCS3 27, xemu 19, another Windows game 11, the rest menus and loads). Left out: 62 minutes of 2026-11-15, 20:00
+to 21:59, with 18 to 21 W over the package (cause not known).
+
+- **The line:** whole machine = 1.55 W + 1.286 x package, for a package draw of 8 to 35 W (residual sd 1.25 W, 95 %
+  of the minutes within 2.6 W). What draws beside the package (screen, memory, storage, radios, fans, conversion) is
+  not separated. Measured against the line, by package draw: 8–12 W 14.6 / 14.4 W, 12–16 W 19.3 / 19.7, 16–20 W
+  24.9 / 24.7, 20–24 W 30.0 / 29.8, 24–28 W 35.3 / 35.5, 28–31 W 40.3 / 39.7, 31–36 W 42.7 / 43.3.
+- **Checks.** One day's minutes against the line of the other day: the energy is 3.6 % under on one and 3.8 % over on
+  the other. A discharge of 69 minutes (83 to 39 %, 31.3 W mean): 36.2 Wh by current x voltage, 36.5 Wh by the line.
+  By game, the mean distance from the line: Enshrouded +0.2 W, RPCS3 −0.8 W, xemu −0.4 W, the other game +0.4 W.
+- **At the limit.** 28 minutes with one limit throughout and the package within 1 W of it: the machine drew 0.8 W
+  (3 %) more than the line gives for the limit (the package was 0.2 W over it). The time at a TDP is "about", not a
+  floor, for a game that draws all of its limit; a game that draws less lasts longer.
+- **The charge in Wh.** BAT1 has no `energy_*` (§6): `charge_now` x the 15.56 V design voltage (`voltage_min_design`),
+  as UPower counts such a battery. The cells read 17.7 V full and 14.9 V at 10 to 19 %: for 83 to 39 % the rule gives
+  35.0 Wh where current x voltage gave 36.2 Wh (3 % under); under 40 % it is about 4 % over.
+- **A later discharge, not in the line's data** (2026-11-16, 20 minutes, 100 to 88 %, the backlight recorded: 1920
+  of 192000 raw throughout): 10.15 Wh by current x voltage, 10.17 Wh by the line; the 20 minutes at 8 W or more are
+  0.05 W under the line in the mean (sd 0.61 W).
+- **Not measured:** the screen's brightness in the three days (the recorder has no column for it) and other
+  brightness levels, a device on USB-C that draws power, any other Claw. `hw.MODELS` has the line (`system_w`) for
+  MS-1T91 only; other models show no time.

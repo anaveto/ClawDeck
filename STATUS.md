@@ -54,6 +54,12 @@ sleep/wake several times fine.
 
 ## Needs the maintainer
 
+**Battery time at the TDP slider and at Autotune's max TDP (2026-11-16):** on battery, both labels show how long the
+charge lasts at their wattage ("TDP (W) · about 3 h 20 min"). The watts of the whole machine at a package draw are
+measured on one Claw 8 EX (HARDWARE-FINDINGS §25); other models show nothing. Not yet seen on a device. Check on the
+EX, on battery: the two labels fit in Quick Access and on the full-screen page, the time falls as the slider goes up,
+and no time shows on the charger.
+
 **Autotune runs on a new governor (2026-11-15):** `governor.py` replaces both old controllers (measure / balance / lower
 / hold, and the target-fps governor). It watches every frame (mangoapp's log is now the first frame source for every
 game), tries a lower TDP for 2.5 s and takes it back at the first loss, and writes the full limit at once when a heavier

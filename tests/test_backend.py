@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "py_modules"))
 
-from clawdeck import autotune, hw, power, profiles, sysfs, thermal  # noqa: E402
+from clawdeck import autotune, battery, hw, power, profiles, sysfs, thermal  # noqa: E402
 
 
 def _w(path, value):
@@ -892,7 +892,7 @@ def plugin(fake_hw, tmp_path, monkeypatch):
     p.hw = fake_hw
     p.power = power.Power(fake_hw)
     ac = {"plugged": False}
-    p.battery = type("B", (), {"plugged": lambda self: ac["plugged"]})()
+    p.battery = type("B", (battery.Battery,), {"plugged": lambda self: ac["plugged"]})(fake_hw)
     p.profiles = profiles.Profiles(str(tmp_path / "profiles.json"))
     p.autotune = autotune.Autotune(fake_hw, p.power, "/nonexistent")
     p.settings = {"autotune": True, "autotune_plugged": True}
@@ -1075,6 +1075,24 @@ def test_status_shows_your_limit_and_what_autotune_uses(plugin):
     assert at["ceiling_tdp"] == 35 and at["tdp"] == s.learned.tdp < 35 and at["plugged"] is False
     assert st["limit_w"] == 35 and st["autotune_w"] == at["tdp"] == st["tdp_w"]
     assert slot["pick"] == {"profile": "max", "tdp": 35, "from": "last"} and slot["running"]
+
+
+def test_how_long_the_charge_lasts_at_each_tdp_on_battery(plugin):
+    """2 558 500 µAh at the 15.56 V design voltage are 39.8 Wh; the whole machine draws 1.55 W + 1.286 x the package
+    (HARDWARE-FINDINGS §25). Minutes, down to 5, for each watt of the slider; nothing on the charger, without the
+    readings, or for a model with no measured line."""
+    p, bat = plugin, plugin.hw.paths.battery
+    _w(f"{bat}/charge_now", 2558500)
+    _w(f"{bat}/voltage_min_design", 15560000)
+    left = p.run(p.get_power())["battery_minutes"]
+    assert list(left) == list(range(8, 36)) and (left[8], left[17], left[30]) == (200, 100, 55)
+    p.ac["plugged"] = True
+    assert p.run(p.get_power())["battery_minutes"] is None
+    other = hw.Hardware(product="MS-1T52", model=hw.MODELS["MS-1T52"], known=True, kernel="test", cpu_model="test",
+                        gpu_driver="xe", paths=p.hw.paths)
+    assert battery.Battery(other).minutes(8, 30) is None and battery.Battery(p.hw).minutes(8, 30)[17] == 100
+    os.remove(f"{bat}/charge_now")
+    assert battery.Battery(p.hw).minutes(8, 30) is None
 
 
 def test_autotunes_own_maximum_is_the_limit_where_autotune_governs_and_the_tdp_setting_where_not(plugin):
