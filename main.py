@@ -772,6 +772,11 @@ class Plugin:
             return getattr(self, "running_key", None) or self.running_appid
         return str(appid)
 
+    def _is_frontend(self, key: str) -> bool:
+        """An emulator frontend's own key (its menus), not a game it started."""
+        sc = frontend.esde_shortcut(HOME)
+        return bool(sc) and sc[0] == str(key)
+
     def _profile_source(self, key: str, plugged: bool) -> str:
         """Whose slot a game starts from: its own; a frontend's game without one, the frontend's own pick."""
         if "#" not in key or self.profiles.own(key, plugged):
@@ -910,9 +915,12 @@ class Plugin:
             self.profiles.set(appid, plugged, {"learned": learned["learned"]})
             # target mode: the TDP that held the target becomes the game's own TDP, as if you had moved the slider in the
             # game, so the next start is there from launch (maintainer, 2026-11-12); not the TDP at exit (a quit menu at
-            # 400 fps lowers it), and not after a temperature guard step
+            # 400 fps lowers it), and not after a temperature guard step. Never an emulator frontend's own slot: a game
+            # it starts without a pick of its own starts from that slot, and what the frontend's menus hold says nothing
+            # about its games (ES-DE's menus held 8 W; Project Gotham Racing 2 in xemu, where Autotune stays out, then
+            # ran at 8 W, 2026-11-16)
             tdp = learned["learned"].get("held")
-            if learned["learned"].get("target") and tdp and not learned.get("thermal"):
+            if learned["learned"].get("target") and tdp and not learned.get("thermal") and not self._is_frontend(appid):
                 self.profiles.set(appid, plugged, {"base": "custom", "tdp": int(tdp)})
                 decky.logger.info("autotune: %s W saved as %s's TDP (%s)", tdp, appid, "plugged in" if plugged else "battery")
         return learned

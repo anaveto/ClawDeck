@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "py_modules"))
 
-from clawdeck import autotune, hw, power, profiles, sysfs, thermal  # noqa: E402
+from clawdeck import autotune, frontend, hw, power, profiles, sysfs, thermal  # noqa: E402
 
 
 def _w(path, value):
@@ -1134,6 +1134,30 @@ def test_each_game_an_emulator_frontend_starts_has_its_own_power_and_autotune(pl
     assert _frontend_event(p, "start", "ps3", "/roms/ps3/Ratchet.iso", "Ratchet") is None   # the same game: no restart
     p.run(p.game_stopped(esde))
     assert p.running_key is None and p.running_title is None
+
+
+def test_what_a_frontends_menus_hold_is_not_the_pick_its_games_start_from(plugin, monkeypatch):
+    """With a target, the TDP that held is saved as the game's own pick. ES-DE's menus hold 60 fps at 8 W, and a game
+    ES-DE starts without a pick of its own starts from ES-DE's slot: Project Gotham Racing 2 in xemu, where Autotune
+    stays out, ran at 8 W (2026-11-16). What the menus held is not saved as ES-DE's pick; a ROM's own result still is."""
+    p = plugin
+    esde, pgr2 = "3119184808", "3119184808#xbox/PGR2"
+    monkeypatch.setattr(frontend, "esde_shortcut", lambda home: (esde, ""))
+    p.settings["autotune_target"] = 60
+    p.run(p.set_tdp(30))
+    p.run(p.game_started(esde))
+    p.autotune.session.settled, p.autotune.session.learned.held = True, 8        # the menus: 60 fps at 8 W
+    assert _frontend_event(p, "start", "xbox", "/roms/xbox/PGR2.iso", "PGR2")
+    assert "tdp" not in p.profiles.own(esde, False) and p.chip() == 30           # the game starts at your 30 W
+    p.autotune.session.settled, p.autotune.session.learned.held = True, 24
+    assert _frontend_event(p, "end", "xbox", "/roms/xbox/PGR2.iso", "PGR2")
+    assert p.profiles.own(pgr2, False)["tdp"] == 24                              # the game's own result is its pick
+    p.autotune.session.settled, p.autotune.session.learned.held = True, 8
+    p.run(p.game_stopped(esde))                                                  # ES-DE closed from its menus
+    assert "tdp" not in p.profiles.own(esde, False)
+    p.run(p.game_started(esde))
+    assert _frontend_event(p, "start", "xbox", "/roms/xbox/Halo.iso", "Halo")
+    assert p.chip() == 30
 
 
 def test_a_frontend_game_has_no_launch_file_of_its_own(plugin, monkeypatch):
