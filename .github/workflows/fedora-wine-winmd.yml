@@ -55,10 +55,14 @@ jobs:
         run: |
           echo "wine-filesystem:"; rpm -qlp ~/rpmbuild/RPMS/noarch/wine-filesystem-*.rpm | grep -E "wine.inf|winmd"
           echo "wine-common:"; rpm -qlp ~/rpmbuild/RPMS/noarch/wine-common-*.rpm | grep -c winmd || true
+      - name: keep the rebuilt wine-core, wine-filesystem and wine-common
+        run: mkdir rpms && cp ~/rpmbuild/RPMS/x86_64/wine-core-[0-9]*.rpm ~/rpmbuild/RPMS/noarch/wine-filesystem-[0-9]*.rpm ~/rpmbuild/RPMS/noarch/wine-common-[0-9]*.rpm rpms/ && ls -l rpms
+      - uses: actions/upload-artifact@v4
+        with: { name: wine-rawhide-rebuild, path: rpms, retention-days: 14 }
       - name: wine-core and wine-filesystem from this build, without wine-common, and the test
         timeout-minutes: 15
         run: |
-          dnf -y install ~/rpmbuild/RPMS/x86_64/wine-core-*.rpm ~/rpmbuild/RPMS/noarch/wine-filesystem-*.rpm mingw64-gcc wimlib-devel gcc procps-ng findutils >/dev/null
+          dnf -y install ~/rpmbuild/RPMS/x86_64/wine-core-[0-9]*.rpm ~/rpmbuild/RPMS/noarch/wine-filesystem-[0-9]*.rpm mingw64-gcc wimlib-devel gcc procps-ng findutils >/dev/null
           rpm -q wine-core wine-filesystem; ! rpm -q wine-common
           ls /usr/share/wine/winmd | head -3
           tools/cabinet-lzms/build.sh && tools/cabinet-lzms/test/run.sh
