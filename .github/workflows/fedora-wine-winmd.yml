@@ -1,0 +1,64 @@
+name: Fedora wine winmd packaging fix (test only)
+on:
+  push:
+    branches: [ci/fedora-wine-winmd]
+jobs:
+  f43-without-wine-common:
+    # Fedora 43's own packages: wine-core and wine-filesystem without wine-common. First as shipped (the cabinet-lzms
+    # test must stop at its first-start limit), then with the winmd files where the fix puts them (it must pass).
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:43
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: packages
+        timeout-minutes: 10
+        run: |
+          dnf -y install wine-core wine-filesystem mingw64-gcc wimlib-devel gcc procps-ng findutils cpio >/dev/null
+          rpm -q wine-core wine-filesystem
+          ! rpm -q wine-common
+          tools/cabinet-lzms/build.sh
+      - name: as shipped, without wine-common (expected to fail)
+        timeout-minutes: 8
+        run: |
+          if tools/cabinet-lzms/test/run.sh; then echo "UNEXPECTED: passed"; exit 1; else echo "failed as expected (status $?)"; fi
+      - name: winmd where the fix puts it (wine-filesystem's place, /usr/share/wine/winmd)
+        timeout-minutes: 8
+        run: |
+          cd /tmp && dnf -y download wine-common >/dev/null && rpm2cpio wine-common-*.rpm | cpio -idm './usr/share/wine/winmd/*' 2>/dev/null
+          cp -a /tmp/usr/share/wine/winmd /usr/share/wine/ && ls /usr/share/wine/winmd | head -3
+          ! rpm -q wine-common
+          cd "$GITHUB_WORKSPACE" && tools/cabinet-lzms/test/run.sh
+  rawhide-rebuild:
+    # The patched spec rebuilt from Fedora's own rawhide source package; then wine-core and wine-filesystem from that
+    # build without wine-common, and the same test.
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:rawhide
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - name: source package and the patch
+        timeout-minutes: 15
+        run: |
+          dnf -y install rpm-build dnf-plugins-core patch curl >/dev/null
+          curl -sfL -o /tmp/wine.src.rpm https://mirrors.kernel.org/fedora/development/rawhide/Everything/source/tree/Packages/w/wine-11.21-1.fc46.src.rpm
+          rpm -i /tmp/wine.src.rpm
+          cd ~/rpmbuild/SPECS && patch -p1 < "$GITHUB_WORKSPACE/.github/fedora-wine/wine-rawhide.diff"
+          grep -n "wine/winmd\|^Release" wine.spec
+          dnf -y builddep wine.spec >/dev/null
+      - name: rpmbuild
+        timeout-minutes: 300
+        run: |
+          cd ~/rpmbuild/SPECS && rpmbuild -bb wine.spec > /tmp/rpmbuild.log 2>&1 || { tail -60 /tmp/rpmbuild.log; exit 1; }
+          tail -5 /tmp/rpmbuild.log; ls ~/rpmbuild/RPMS/*/ | head -80
+      - name: file lists
+        run: |
+          echo "wine-filesystem:"; rpm -qlp ~/rpmbuild/RPMS/noarch/wine-filesystem-*.rpm | grep -E "wine.inf|winmd"
+          echo "wine-common:"; rpm -qlp ~/rpmbuild/RPMS/noarch/wine-common-*.rpm | grep -c winmd || true
+      - name: wine-core and wine-filesystem from this build, without wine-common, and the test
+        timeout-minutes: 15
+        run: |
+          dnf -y install ~/rpmbuild/RPMS/x86_64/wine-core-*.rpm ~/rpmbuild/RPMS/noarch/wine-filesystem-*.rpm mingw64-gcc wimlib-devel gcc procps-ng findutils >/dev/null
+          rpm -q wine-core wine-filesystem; ! rpm -q wine-common
+          ls /usr/share/wine/winmd | head -3
+          tools/cabinet-lzms/build.sh && tools/cabinet-lzms/test/run.sh

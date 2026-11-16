@@ -1,0 +1,38 @@
+--- a/wine.spec	2026-11-16 00:06:04
++++ b/wine.spec	2026-11-16 00:06:14
+@@ -47,7 +47,7 @@
+ 
+ Name:           wine
+ Version:        11.21
+-Release:        1%{?dist}
++Release:        2%{?dist}
+ Summary:        A compatibility layer for windows applications
+ 
+ License:        LGPL-2.1-or-later
+@@ -2131,6 +2131,7 @@
+ %dir %{_datadir}/wine/mono
+ %dir %{_datadir}/wine/fonts
+ %{_datadir}/wine/wine.inf
++%{_datadir}/wine/winmd/
+ %{_datadir}/wine/nls/
+ 
+ %files common
+@@ -2146,7 +2147,6 @@
+ %{_bindir}/wineboot
+ %{_bindir}/wineconsole
+ %{_bindir}/winecfg
+-%{_datadir}/wine/winmd/
+ %{_mandir}/man1/wine.1*
+ %{_mandir}/man1/wineserver.1*
+ %{_mandir}/man1/msiexec.1*
+@@ -2341,6 +2341,10 @@
+ %endif
+ 
+ %changelog
++* Mon Nov 16 2026 Ana Veto <green.koala2979@fastmail.com> - 11.21-2
++- Move the winmd files to wine-filesystem, beside wine.inf, which copies them
++  into every new prefix (without wine-common, wineboot never finished)
++
+ * Thu Nov 05 2026 Michael Cronenworth <mike@cchtml.com> - 11.21-1
+ - version update
+ 
