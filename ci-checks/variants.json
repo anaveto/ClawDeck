@@ -1,0 +1,37 @@
+{
+ "check-240": [
+  [
+   "py_modules/clawdeck/governor.py",
+   "CHECK_S, CHECK_MAX_S = 60.0, 600.0",
+   "CHECK_S, CHECK_MAX_S = 60.0, 240.0"
+  ]
+ ],
+ "under-target-120": [
+  [
+   "py_modules/clawdeck/governor.py",
+   "        every = REACH_S if t - st.ref_drop_at < REACH_FOR_S else CHECK_MAX_S",
+   "        every = REACH_S if t - st.ref_drop_at < REACH_FOR_S else 120.0 if cfg.target and here < cfg.target * REACHED else CHECK_MAX_S"
+  ]
+ ],
+ "under-target-60": [
+  [
+   "py_modules/clawdeck/governor.py",
+   "        every = REACH_S if t - st.ref_drop_at < REACH_FOR_S else CHECK_MAX_S",
+   "        every = REACH_S if t - st.ref_drop_at < REACH_FOR_S else 60.0 if cfg.target and here < cfg.target * REACHED else CHECK_MAX_S"
+  ]
+ ],
+ "reach-off": [
+  [
+   "py_modules/clawdeck/governor.py",
+   "        every = REACH_S if t - st.ref_drop_at < REACH_FOR_S else CHECK_MAX_S",
+   "        every = CHECK_MAX_S"
+  ]
+ ],
+ "small-noise-off": [
+  [
+   "py_modules/clawdeck/governor.py",
+   "    small = min(4 * SUSTAINED, max(SUSTAINED, NOISE * st.noise / (PACE_FRAMES / N) ** 0.5))",
+   "    small = SUSTAINED"
+  ]
+ ]
+}

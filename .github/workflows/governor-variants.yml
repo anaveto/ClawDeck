@@ -1,0 +1,28 @@
+name: governor variants (test only)
+# The fuzz of governor-checks.yml with one rule of the governor changed (ci-checks/variants.json), to measure it before it changes.
+on:
+  push:
+    branches: ['checks/governor-variants']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash        # with pipefail: a tool that stops fails its job (mutation shard 21 gave an empty file and passed)
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ['reach-off', 'small-noise-off', 'visit-woke-any-ref']
+        first: [0, 60, 120, 180, 240]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: '3.11' }
+      - run: python ci-checks/variant.py ${{ matrix.variant }}
+      - run: python ci-checks/fuzz.py ${{ matrix.first }} 60 | tee fuzz-${{ matrix.first }}.txt
+      - run: cd ci-checks && PYTHONPATH=. python stretches.py $(seq ${{ matrix.first }} $(( ${{ matrix.first }} + 59 ))) | tee ../stretches-${{ matrix.first }}.txt
+      - uses: actions/upload-artifact@v7
+        with: { name: '${{ matrix.variant }}-${{ matrix.first }}', path: '*-${{ matrix.first }}.txt' }

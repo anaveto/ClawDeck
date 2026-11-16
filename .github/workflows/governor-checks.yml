@@ -1,0 +1,42 @@
+name: governor checks (test only)
+# Heavy checks of the Autotune governor that do not run on a developer's machine: every rule broken in turn against the
+# tests (mutation), and random games in the simulator (fuzz). Results are in the job logs and in the artifacts.
+on:
+  push:
+    branches: ['ci/autotune-governor-checks']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash        # with pipefail: a tool that stops fails its job (mutation shard 21 gave an empty file and passed)
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: '3.11' }
+      - run: pip install pytest
+      - run: python ci-checks/mutate.py ${{ matrix.shard }} 24 | tee mutation-${{ matrix.shard }}.txt
+      - uses: actions/upload-artifact@v7
+        with: { name: 'mutation-${{ matrix.shard }}', path: 'mutation-${{ matrix.shard }}.txt' }
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        first: [0, 60, 120, 180, 240]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: '3.11' }
+      - run: python ci-checks/fuzz.py ${{ matrix.first }} 60 | tee fuzz-${{ matrix.first }}.txt
+      - run: cd ci-checks && PYTHONPATH=. python stretches.py $(seq ${{ matrix.first }} $(( ${{ matrix.first }} + 59 ))) | tee ../stretches-${{ matrix.first }}.txt
+      - uses: actions/upload-artifact@v7
+        with: { name: 'fuzz-${{ matrix.first }}', path: '*-${{ matrix.first }}.txt' }

@@ -1,0 +1,1997 @@
+[
+ [
+  "g-free-loss-raises",
+  "py_modules/clawdeck/governor.py",
+  "a loss at a limit that can't be its cause is answered like any other",
+  "            st.free_loss = st.free_loss if st.free_loss is not None else t\n            return act",
+  "            st.free_loss = st.free_loss if st.free_loss is not None else t"
+ ],
+ [
+  "g-dippy-never",
+  "py_modules/clawdeck/governor.py",
+  "the game's own dips are never learned",
+  "    dippy = sum(1 for d in st.dips if t - d <= DIPS_S) >= DIPS",
+  "    dippy = False"
+ ],
+ [
+  "g-dippy-always",
+  "py_modules/clawdeck/governor.py",
+  "every game counts as one that dips by itself",
+  "    dippy = sum(1 for d in st.dips if t - d <= DIPS_S) >= DIPS",
+  "    dippy = True"
+ ],
+ [
+  "g-patient-zero",
+  "py_modules/clawdeck/governor.py",
+  "no patience with a game that dips",
+  "PATIENT_S = 1.0 ",
+  "PATIENT_S = 0.0 "
+ ],
+ [
+  "g-patient-long",
+  "py_modules/clawdeck/governor.py",
+  "30 s of patience with a game that dips",
+  "PATIENT_S = 1.0 ",
+  "PATIENT_S = 30.0"
+ ],
+ [
+  "g-dips-forever",
+  "py_modules/clawdeck/governor.py",
+  "a dip counts for ever (DIPS_S)",
+  "DIPS, DIPS_S = 2, 300.0",
+  "DIPS, DIPS_S = 2, 1e12 "
+ ],
+ [
+  "g-dip-max-long",
+  "py_modules/clawdeck/governor.py",
+  "any loss at the full limit is a dip, however long (DIP_MAX_S)",
+  "DIP_MAX_S = 2.0",
+  "DIP_MAX_S = 1e9"
+ ],
+ [
+  "g-clear-noise-off",
+  "py_modules/clawdeck/governor.py",
+  "the clear-loss threshold does not follow the game's wobble",
+  "    clear = min(4 * CLEAR, max(CLEAR, NOISE * st.noise))",
+  "    clear = CLEAR"
+ ],
+ [
+  "g-clear-noise-uncapped",
+  "py_modules/clawdeck/governor.py",
+  "... is not capped at 4x",
+  "    clear = min(4 * CLEAR, max(CLEAR, NOISE * st.noise))",
+  "    clear = max(CLEAR, NOISE * st.noise)"
+ ],
+ [
+  "g-small-noise-off",
+  "py_modules/clawdeck/governor.py",
+  "the sustained-loss threshold does not follow the wobble",
+  "    small = min(4 * SUSTAINED, max(SUSTAINED, NOISE * st.noise / (PACE_FRAMES / N) ** 0.5))",
+  "    small = SUSTAINED"
+ ],
+ [
+  "g-small-noise-uncapped",
+  "py_modules/clawdeck/governor.py",
+  "... is not capped at 4x",
+  "    small = min(4 * SUSTAINED, max(SUSTAINED, NOISE * st.noise / (PACE_FRAMES / N) ** 0.5))",
+  "    small = max(SUSTAINED, NOISE * st.noise / (PACE_FRAMES / N) ** 0.5)"
+ ],
+ [
+  "g-spread-zero",
+  "py_modules/clawdeck/governor.py",
+  "the wobble is always 0",
+  "    return (max(rates) - min(rates)) / 2.5 / statistics.median(rates)",
+  "    return 0.0"
+ ],
+ [
+  "g-noise-last",
+  "py_modules/clawdeck/governor.py",
+  "the wobble is the last look's, not the median of 21",
+  "        st.noise = statistics.median(st.noises)",
+  "        st.noise = st.noises[-1]"
+ ],
+ [
+  "g-hitch-kept",
+  "py_modules/clawdeck/governor.py",
+  "the game's own long frames stay in every rate",
+  "    line = statistics.median(ms) * HITCH",
+  "    line = float(\"inf\")"
+ ],
+ [
+  "g-adopt-at-once",
+  "py_modules/clawdeck/governor.py",
+  "... are adopted at once",
+  "ADOPT_S = 5.0 ",
+  "ADOPT_S = 0.0 "
+ ],
+ [
+  "g-off-no-raise",
+  "py_modules/clawdeck/governor.py",
+  "a starved scene (under OFF_LO) is not given the full limit",
+  "        elif st.limit < top and not silent and cur is not None and usual and cur < usual * OFF_LO:",
+  "        elif False:"
+ ],
+ [
+  "g-silent-never",
+  "py_modules/clawdeck/governor.py",
+  "no frames is never noticed",
+  "    silent = st.frame_at is not None and t - st.frame_at > NO_FRAMES_S",
+  "    silent = False"
+ ],
+ [
+  "g-free-looks-1",
+  "py_modules/clawdeck/governor.py",
+  "the reference is one look, not the median of five",
+  "FREE_LOOKS = 5 ",
+  "FREE_LOOKS = 1 "
+ ],
+ [
+  "g-free-ref-last",
+  "py_modules/clawdeck/governor.py",
+  "the reference is the last free look, not their median",
+  "            level = statistics.median(st.free_fps)",
+  "            level = st.free_fps[-1]"
+ ],
+ [
+  "g-bind-wait-off",
+  "py_modules/clawdeck/governor.py",
+  "a step is watched before it binds",
+  "    if st.mode == \"probe\" and obs.draw_w is not None and obs.draw_w > st.limit + BIND_W and t - st.wrote_at < BIND_S:",
+  "    if False:"
+ ],
+ [
+  "g-bind-forever",
+  "py_modules/clawdeck/governor.py",
+  "the bind wait has no end",
+  "BIND_S, BIND_W = 3.0, 2.5",
+  "BIND_S, BIND_W = 1e9, 2.5"
+ ],
+ [
+  "g-rising-off",
+  "py_modules/clawdeck/governor.py",
+  "a raise is judged while the draw still rises",
+  "    if rising and t - st.wrote_at < BIND_S:",
+  "    if False:"
+ ],
+ [
+  "g-climbing-off",
+  "py_modules/clawdeck/governor.py",
+  "a raise is judged while the frame rate still climbs",
+  "    if third >= N and t - st.wrote_at < 2 * BIND_S and _fps(st.watch[-third:]) > _fps(st.watch[:third]) * (1 + CLEAR):",
+  "    if False:"
+ ],
+ [
+  "g-raise-whole-watch",
+  "py_modules/clawdeck/governor.py",
+  "a raise is judged on the whole watch, also when long",
+  "    now = _fps(st.watch[len(st.watch) // 2:]) if len(st.watch) >= 4 * N else _fps(st.watch)",
+  "    now = _fps(st.watch)"
+ ],
+ [
+  "g-no-judgement-never-ends",
+  "py_modules/clawdeck/governor.py",
+  "a raise that can't be judged never ends",
+  "    if len(st.watch) < N // 2:                       # no judgement possible: stay where it is\n        hold()\n        return act",
+  "    if len(st.watch) < N // 2:\n        return act"
+ ],
+ [
+  "g-probe-collapse-off",
+  "py_modules/clawdeck/governor.py",
+  "a step that loses far more than its size is treated as any failed step",
+  "        if lost and cur < want * (1 - SHIFT) and st.prev < top and not st.retest:",
+  "        if False:"
+ ],
+ [
+  "g-quiet-off",
+  "py_modules/clawdeck/governor.py",
+  "a step starts before quiet_until",
+  "    if (t >= st.quiet_until and t - st.changed_at >= AFTER_LOSS_S",
+  "    if (True and t - st.changed_at >= AFTER_LOSS_S"
+ ],
+ [
+  "g-draw-shortcut-off",
+  "py_modules/clawdeck/governor.py",
+  "no step straight to just over the draw",
+  "        if obs.draw_w is not None and obs.draw_w + 2 < nxt:",
+  "        if False:"
+ ],
+ [
+  "g-after-loss-no-doubling",
+  "py_modules/clawdeck/governor.py",
+  "the wait after failed steps does not double",
+  "            hold(min(AFTER_LOSS_MAX_S, AFTER_LOSS_S * 2 ** max(0, st.misses - 1)))",
+  "            hold(AFTER_LOSS_S)"
+ ],
+ [
+  "g-tried-off",
+  "py_modules/clawdeck/governor.py",
+  "the collapsed step's own level is not marked",
+  "    if st.mode == \"recover\" and st.tried is not None:",
+  "    if False:"
+ ],
+ [
+  "g-unclamped",
+  "py_modules/clawdeck/governor.py",
+  "a write is not clamped to floor..top",
+  "        watts = int(max(cfg.floor, min(top, watts)))",
+  "        watts = int(watts)"
+ ],
+ [
+  "g-guard-cap-off",
+  "py_modules/clawdeck/governor.py",
+  "the guard's cap is not obeyed at once",
+  "    if st.limit > top:                               # the guard's cap",
+  "    if False:"
+ ],
+ [
+  "g-floor-raise-off",
+  "py_modules/clawdeck/governor.py",
+  "a raised floor is not obeyed",
+  "    if st.limit < cfg.floor:                         # the floor was raised",
+  "    if False:"
+ ],
+ [
+  "g-multiplier-off",
+  "py_modules/clawdeck/governor.py",
+  "the multiplier is ignored",
+  "        ms *= obs.multiplier                         # a rendered frame",
+  "        ms *= 1.0                                    # a rendered frame"
+ ],
+ [
+  "g-reached-half",
+  "py_modules/clawdeck/governor.py",
+  "a target counts as reached at half of it",
+  "REACHED = 0.99 ",
+  "REACHED = 0.50 "
+ ],
+ [
+  "g-tol-15",
+  "py_modules/clawdeck/governor.py",
+  "TOL 15 %",
+  "TOL = 0.05 ",
+  "TOL = 0.15 "
+ ],
+ [
+  "g-settle-zero",
+  "py_modules/clawdeck/governor.py",
+  "no settle time after a write",
+  "SETTLE_S = 0.15 ",
+  "SETTLE_S = 0.0  "
+ ],
+ [
+  "g-dwell-short",
+  "py_modules/clawdeck/governor.py",
+  "a step is watched 0.5 s",
+  "DWELL_S = 2.5 ",
+  "DWELL_S = 0.5 "
+ ],
+ [
+  "g-start-level-lowest",
+  "py_modules/clawdeck/governor.py",
+  "the next start is the lowest level held",
+  "        if acc >= 0.8 * total:",
+  "        if acc >= 0.0:"
+ ],
+ [
+  "g-start-level-any-time",
+  "py_modules/clawdeck/governor.py",
+  "the next start is saved after any holding time",
+  "    if total < 60:\n        return None",
+  "    if total < 0:\n        return None"
+ ],
+ [
+  "g-held-not-counted",
+  "py_modules/clawdeck/governor.py",
+  "the holding time is not counted",
+  "        st.held_s[st.limit] = st.held_s.get(st.limit, 0.0) + dt",
+  "        pass"
+ ],
+ [
+  "g-look-always-slow",
+  "py_modules/clawdeck/governor.py",
+  "a watch is looked at twice a second only",
+  "    act = Action(look_s=LOOK_S if st.mode == \"hold\" else WATCH_S)",
+  "    act = Action(look_s=LOOK_S)"
+ ],
+ [
+  "w-mult-change-no-reset",
+  "py_modules/clawdeck/autotune.py",
+  "a change of the multiplier does not start the governor's memory over",
+  "        if s.multiplier is not None and abs(mult - s.multiplier) >= 0.5:",
+  "        if False:"
+ ],
+ [
+  "w-mult-not-whole",
+  "py_modules/clawdeck/autotune.py",
+  "the multiplier is not rounded to a whole number",
+  "        return float(max(1, round(statistics.median(s.mult_hist))))",
+  "        return float(statistics.median(s.mult_hist))"
+ ],
+ [
+  "w-mult-last",
+  "py_modules/clawdeck/autotune.py",
+  "the multiplier is the last quotient, not the median of five",
+  "        return float(max(1, round(statistics.median(s.mult_hist))))",
+  "        return float(max(1, round(s.mult_hist[-1])))"
+ ],
+ [
+  "w-mult-few-frames",
+  "py_modules/clawdeck/autotune.py",
+  "a quotient is taken from fewer than 10 frames",
+  "            if s.mult_seen is not None and s.mult_n >= 10 and s.mult_ms > 0:",
+  "            if s.mult_seen is not None and s.mult_ms > 0:"
+ ],
+ [
+  "w-xell-never-stale",
+  "py_modules/clawdeck/autotune.py",
+  "an old XeLL line never goes stale",
+  "        if self._xell and time.monotonic() - self._xell[0] <= XELL_FRESH_S:",
+  "        if self._xell:"
+ ],
+ [
+  "w-pause-no-give-back",
+  "py_modules/clawdeck/autotune.py",
+  "pause leaves Autotune's limit on the chip",
+  "                self._give_back(s)                        # not a limit of Autotune's for the rest of the session",
+  "                pass"
+ ],
+ [
+  "w-give-back-keeps-governed",
+  "py_modules/clawdeck/autotune.py",
+  "giving back leaves PL2 at PL1 + 2 W",
+  "        self.power.governed = False\n        self._tdp(s.learned, s.ceiling_tdp, force=True)",
+  "        self._tdp(s.learned, s.ceiling_tdp, force=True)"
+ ],
+ [
+  "w-stop-keeps-governed",
+  "py_modules/clawdeck/autotune.py",
+  "stop leaves power.governed on",
+  "        self.sampler.set_prefix(None)\n        self.power.governed = False",
+  "        self.sampler.set_prefix(None)"
+ ],
+ [
+  "w-held-w-plain",
+  "py_modules/clawdeck/autotune.py",
+  "the guard gets the limit on the chip also during a look at the full limit",
+  "            return min(s.learned.tdp, s.gov.prev)",
+  "            return s.learned.tdp"
+ ],
+ [
+  "w-release-paused-no-write",
+  "py_modules/clawdeck/autotune.py",
+  "a release of the guard does not reach a paused game",
+  "        if s.paused and not self._tdp(s.learned, self._top(s), force=True):",
+  "        if False:"
+ ],
+ [
+  "w-thermal-obs-off",
+  "py_modules/clawdeck/autotune.py",
+  "the governor is not told of the clock cap",
+  "thermal=s.clock_pct is not None, multiplier=mult)",
+  "thermal=False, multiplier=mult)"
+ ],
+ [
+  "w-cap-obs-off",
+  "py_modules/clawdeck/autotune.py",
+  "the governor is not told of the guard's cap",
+  "cap_w=s.thermal_cap,",
+  "cap_w=None,"
+ ],
+ [
+  "w-tdp-cap-off",
+  "py_modules/clawdeck/autotune.py",
+  "_tdp writes over the guard's cap",
+  "        if s is not None and s.thermal_cap is not None and watts > s.thermal_cap:",
+  "        if False:"
+ ],
+ [
+  "w-limit-not-synced",
+  "py_modules/clawdeck/autotune.py",
+  "the governor is not told what is on the chip after a write",
+  "            s.gov.limit = l.tdp                          # what is on the chip (the guard's cap may have cut the write)",
+  "            pass"
+ ],
+ [
+  "w-no-fps-never-gives-up",
+  "py_modules/clawdeck/autotune.py",
+  "a game without frames is never given up",
+  "            if s.no_fps_s >= NO_FPS_S:",
+  "            if False:"
+ ],
+ [
+  "w-frames-after-all-off",
+  "py_modules/clawdeck/autotune.py",
+  "frames after giving up do not start it again",
+  "        if smp.fps and s.no_frames:",
+  "        if False:"
+ ],
+ [
+  "w-two-sources",
+  "py_modules/clawdeck/autotune.py",
+  "the game's own log is read in every look without mangoapp rows",
+  "        if now - self._mango_frames_at < MANGOAPP_RELOG_S:\n            return None, None",
+  "        if False:\n            return None, None"
+ ],
+ [
+  "w-own-log-backlog",
+  "py_modules/clawdeck/autotune.py",
+  "the game's own log is read from its start after mangoapp stops",
+  "            if self._own_from != f and self._mango_frames_at > -1e9:",
+  "            if False:"
+ ],
+ [
+  "w-frames-end-now",
+  "py_modules/clawdeck/autotune.py",
+  "all frames of a look end at the same time",
+  "            end -= x / 1000.0",
+  "            end -= 0.0"
+ ],
+ [
+  "w-fallback-one-frame",
+  "py_modules/clawdeck/autotune.py",
+  "a one-row-a-second log gives one frame a look",
+  "            ms = [1000.0 / smp.shown_fps] * max(1, round(smp.shown_fps * span))",
+  "            ms = [1000.0 / smp.shown_fps]"
+ ],
+ [
+  "w-start-any-ceiling",
+  "py_modules/clawdeck/autotune.py",
+  "a result found under another limit or target is the start",
+  "        before = (known.get(\"start\") or known.get(\"tdp\")) if same else None",
+  "        before = (known.get(\"start\") or known.get(\"tdp\")) if True else None"
+ ],
+ [
+  "w-old-result-ignored",
+  "py_modules/clawdeck/autotune.py",
+  "an earlier build's result (tdp only) is not the start",
+  "        before = (known.get(\"start\") or known.get(\"tdp\")) if same else None",
+  "        before = known.get(\"start\") if same else None"
+ ],
+ [
+  "w-remember-off",
+  "py_modules/clawdeck/autotune.py",
+  "nothing is saved for the next start",
+  "            s.learned.start, s.settled = level, True",
+  "            pass"
+ ],
+ [
+  "w-log-no-goal",
+  "py_modules/clawdeck/autotune.py",
+  "the log's goal column is empty",
+  "                            r(governor.goal(s.gov, s.cfg), 1) if s.gov and s.cfg and not s.paused else None,",
+  "                            None,"
+ ],
+ [
+  "w-log-notes-kept",
+  "py_modules/clawdeck/autotune.py",
+  "the log repeats old notes",
+  "                s.notes.clear()",
+  "                pass"
+ ],
+ [
+  "w-log-no-note",
+  "py_modules/clawdeck/autotune.py",
+  "the governor's notes without a write do not reach the log",
+  "            s.last_action = act.note\n            self._note(s, act.note)",
+  "            s.last_action = act.note"
+ ],
+ [
+  "w-tau-not-set",
+  "py_modules/clawdeck/autotune.py",
+  "the 8 s window is never set",
+  "            if self.power.set_pl1_window(GOVERN_TAU_US):\n                s.short_tau = True",
+  "            if False:\n                s.short_tau = True"
+ ],
+ [
+  "w-floor-not-to-cfg",
+  "py_modules/clawdeck/autotune.py",
+  "a new floor does not reach the governor",
+  "        if s.cfg:\n            s.cfg.floor = s.floor_tdp",
+  "        if False:\n            s.cfg.floor = s.floor_tdp"
+ ],
+ [
+  "p-governed-pl2-off",
+  "py_modules/clawdeck/power.py",
+  "a hand-set PL2 stays while Autotune governs",
+  "        if self.pl2_w is not None and not self.governed:",
+  "        if self.pl2_w is not None:"
+ ],
+ [
+  "m-guard-gets-chip-limit",
+  "main.py",
+  "main.py hands the guard learned.tdp, not held_w()",
+  "return self.guard.check(self.autotune.held_w(), self._floor_w(), self.autotune.thermal_step,",
+  "return self.guard.check(sess.learned.tdp, self._floor_w(), self.autotune.thermal_step,"
+ ],
+ [
+  "m-switch-off-no-pause",
+  "main.py",
+  "switching Autotune off in a game does not pause it",
+  "                self.autotune.pause(\"autotune switched off\", limit=w)",
+  "                pass"
+ ],
+ [
+  "m-lever-no-pause",
+  "main.py",
+  "a manual CPU ceiling does not pause it",
+  "        self.autotune.pause(\"manual CPU ceiling\")",
+  "        pass"
+ ],
+ [
+  "g-bad-frames-kept",
+  "py_modules/clawdeck/governor.py",
+  "frame times of zero or less are taken",
+  "        if not ms > 0:                               # not a frame time (zero, negative, not a number)\n            continue",
+  "        if False:\n            continue"
+ ],
+ [
+  "g-cap-under-floor-off",
+  "py_modules/clawdeck/governor.py",
+  "the floor wins over a guard's cap under it",
+  "    if obs.cap_w is not None and obs.cap_w < cfg.floor:",
+  "    if False:"
+ ],
+ [
+  "g-look-3n-off",
+  "py_modules/clawdeck/governor.py",
+  "a look at the full limit is judged after a second, however few frames",
+  "    if seen < BACK_S or (len(st.watch) < 3 * N and seen < 3 * BACK_S):",
+  "    if seen < BACK_S:"
+ ],
+ [
+  "w-row-at-off",
+  "py_modules/clawdeck/autotune.py",
+  "a one-row-a-second log hands on this look's frames only",
+  "            span = dt if s is None or s.row_at is None else max(dt, min(2.0, smp.t - s.row_at))",
+  "            span = dt"
+ ],
+ [
+  "w-refused-no-rest",
+  "py_modules/clawdeck/autotune.py",
+  "the governor does not rest after a refused write",
+  "        if s.paused or s.gov is None or smp.t < s.refused_until:",
+  "        if s.paused or s.gov is None:"
+ ],
+ [
+  "w-log-row-before-off",
+  "py_modules/clawdeck/autotune.py",
+  "the log's slow share has no pace of the frames before",
+  "                    st = frame_stats(s.row_ms, statistics.median(s.row_before) if s.row_before else None)",
+  "                    st = frame_stats(s.row_ms, None)"
+ ],
+ [
+  "w-own-pace-exe-off",
+  "py_modules/clawdeck/autotune.py",
+  "the file a process runs is not looked at (xemu from its AppImage is not found)",
+  "    return exe if exe in OWN_PACE else None",
+  "    return None"
+ ],
+ [
+  "m-frontend-learning-inherited",
+  "main.py",
+  "a game an emulator frontend starts takes the frontend's own learning (what its menus held)",
+  "            prof = {k: v for k, v in prof.items() if k != \"learned\"}       # never with another game's learning\n",
+  "            pass\n"
+ ],
+ [
+  "g-free-always",
+  "py_modules/clawdeck/governor.py",
+  "every look counts as free",
+  "    free = st.limit >= top or (obs.draw_w is not None and obs.draw_w <= st.limit - 2)",
+  "    free = True"
+ ],
+ [
+  "g-free-no-draw",
+  "py_modules/clawdeck/governor.py",
+  "the draw never makes a look free",
+  "    free = st.limit >= top or (obs.draw_w is not None and obs.draw_w <= st.limit - 2)",
+  "    free = st.limit >= top"
+ ],
+ [
+  "w-thermal-step-mode-kept",
+  "py_modules/clawdeck/autotune.py",
+  "the guard's step leaves the governor in its watch",
+  "            s.gov.limit = l.tdp\n            governor.drop(s.gov)\n",
+  "            s.gov.limit = l.tdp\n"
+ ],
+ [
+  "w-refused-no-wait",
+  "py_modules/clawdeck/autotune.py",
+  "a refused write is tried again at every look",
+  "                governor.drop(s.gov)\n                s.gov.quiet_until, s.look_s = smp.t + REFUSED_S, governor.LOOK_S\n",
+  "                pass\n"
+ ],
+ [
+  "w-own-pace-off",
+  "py_modules/clawdeck/autotune.py",
+  "xemu found during the game is governed",
+  "            emu = own_pace_emulator()\n            if emu:\n                self._stay_out(s, emu)",
+  "            emu = own_pace_emulator()\n            if False:\n                self._stay_out(s, emu)"
+ ],
+ [
+  "w-own-pace-at-start-off",
+  "py_modules/clawdeck/autotune.py",
+  "xemu already running at the start is governed",
+  "        emu = own_pace_emulator()                         # already running (a resume, a new power source)",
+  "        emu = None"
+ ],
+ [
+  "w-at-limit-ignored",
+  "py_modules/clawdeck/autotune.py",
+  "a limit picked in the game is not where it starts",
+  "        self._govern_from(s, ceiling_tdp if at_limit or emu else None if before is None else int(before))",
+  "        self._govern_from(s, ceiling_tdp if emu else None if before is None else int(before))"
+ ],
+ [
+  "w-thermal-cap-before-write",
+  "py_modules/clawdeck/autotune.py",
+  "the guard's cap is recorded though the write failed",
+  "            return False\n        s.thermal_cap = int(watts)\n        if s.gov:",
+  "            s.thermal_cap = int(watts)\n            return False\n        s.thermal_cap = int(watts)\n        if s.gov:"
+ ],
+ [
+  "m-pl2-restarts-governed",
+  "main.py",
+  "a PL2 change restarts a governed session",
+  "            if self.power.governed:                       # the chip keeps Autotune's PL2: the session goes on as it is",
+  "            if False:"
+ ],
+ [
+  "m-clock-look-without-binds",
+  "py_modules/clawdeck/governor.py",
+  "the look by the clock also while the package draws less than the limit",
+  "        if (settled and binds and st.free_w != st.limit",
+  "        if (settled and st.free_w != st.limit"
+ ],
+ [
+  "m-said-after-any-answer",
+  "py_modules/clawdeck/governor.py",
+  "the answer of any look counts for the second-loss rule",
+  "        st.said = (t, now) if st.mode == \"recover\" else st.said",
+  "        st.said = (t, now)"
+ ],
+ [
+  "r-a3-no-check-after-30-s",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: a3 no check after 30 s",
+  "(smp.t - s.own_checked_at >= OWN_PACE_CHECK_S or (smp.fps and s.no_frames))",
+  "((smp.t - s.own_checked_at >= OWN_PACE_CHECK_S and smp.t - s.started_at <= 31) or (smp.fps and s.no_frames))"
+ ],
+ [
+  "r-a3-no-check-before-the-take-over",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: a3 no check before the take over",
+  "(smp.t - s.own_checked_at >= OWN_PACE_CHECK_S or (smp.fps and s.no_frames))",
+  "(smp.t - s.own_checked_at >= OWN_PACE_CHECK_S)"
+ ],
+ [
+  "r-b6-back-without-frames",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: b6 back without frames",
+  "not s.own_pace and s.no_fps_s < NO_FPS_S",
+  "not s.own_pace and not s.no_frames"
+ ],
+ [
+  "r-b8-thermal-step-no-drop",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: b8 thermal step no drop",
+  "            governor.drop(s.gov)\n        self._did(s, f\"thermal",
+  "            s.gov.mode = \"hold\"\n        self._did(s, f\"thermal"
+ ],
+ [
+  "r-b8-refused-no-drop",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: b8 refused no drop",
+  "                governor.drop(s.gov)\n                s.gov.quiet_until",
+  "                s.gov.mode = \"hold\"\n                s.gov.quiet_until"
+ ],
+ [
+  "r-b7-floor-no-drop",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: b7 floor no drop",
+  "        st.prev = max(st.prev, cfg.floor)\n        if st.mode != \"hold\":\n            drop(st)\n",
+  "        st.prev = max(st.prev, cfg.floor)\n        if st.mode != \"hold\":\n            st.mode = \"hold\"\n"
+ ],
+ [
+  "r-b8-pick-without-the-games-own-record",
+  "main.py",
+  "rule taken out: b8 pick without the games own record",
+  "            if self.profiles.own(appid, plugged).get(\"learned\"):\n                prof[\"learned\"] = self.profiles.own(appid, plugged)[\"learned\"]\n",
+  ""
+ ],
+ [
+  "r-drop-keeps-the-second-try",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: drop keeps the second try",
+  "    st.retest, st.before, st.tried, st.loss_since = False, None, None, None\n",
+  "    st.before, st.loss_since = None, None\n"
+ ],
+ [
+  "r-look-under-the-clock-cap",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: look under the clock cap",
+  "    if st.limit < top and not obs.thermal and full:  # (under the guard's clock cap, what is slow is the cap's)\n",
+  "    if st.limit < top and full:\n"
+ ],
+ [
+  "r-no-band-kept-across-a-look",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no band kept across a look",
+  "            keep = now < before or t - st.band_at >= SCENE_S\n",
+  "            keep = False\n"
+ ],
+ [
+  "r-no-scene-wait",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no scene wait",
+  "(t - st.scene_at >= SCENE_S or (nxt == st.home and _same(st.home_ref, ref)))",
+  "True"
+ ],
+ [
+  "r-home-scene-waits",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: home scene waits",
+  "(t - st.scene_at >= SCENE_S or (nxt == st.home and _same(st.home_ref, ref)))",
+  "t - st.scene_at >= SCENE_S"
+ ],
+ [
+  "r-step-booked-in-the-next-scene",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: step booked in the next scene",
+  "        if st.before and now >= st.before * (1 - CLEAR) and st.before >= want:\n            # the full limit gives what the limit before the step gave: the same scene, with a steep edge under it\n            failed(tried, now)\n",
+  "        failed(tried, now)\n        if st.before and now >= st.before * (1 - CLEAR) and st.before >= want:\n"
+ ],
+ [
+  "r-dip-booked-soon-after-a-write-free",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: dip booked soon after a write free",
+  "        if t - st.free_loss <= DIP_MAX_S and st.free_loss - st.changed_at >= RECENT_S:\n",
+  "        if t - st.free_loss <= DIP_MAX_S:\n"
+ ],
+ [
+  "r-dip-booked-soon-after-a-write-held",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: dip booked soon after a write held",
+  "        if st.loss_since - st.changed_at >= RECENT_S:\n",
+  "        if True:\n"
+ ],
+ [
+  "r-edge-watt-without-end",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: edge watt without end",
+  "            if was + 1 < top and (len(st.edged) < STEP_W or t - st.edged[0] >= RETRY_S):\n",
+  "            if was + 1 < top:\n"
+ ],
+ [
+  "r-no-edge-watt",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no edge watt",
+  "            if was + 1 < top and (len(st.edged) < STEP_W or t - st.edged[0] >= RETRY_S):\n",
+  "            if False:\n"
+ ],
+ [
+  "r-lighter-at-5-pct",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: lighter at 5 pct",
+  "    return then is not None and now is not None and now > then * (1 + SHIFT)\n",
+  "    return then is not None and now is not None and now > then * (1 + ABOVE)\n"
+ ],
+ [
+  "r-moved-rate-no-look",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: moved rate no look",
+  "            if st.before and rate > st.before * (1 + max(ABOVE, small)) and not obs.thermal:\n",
+  "            if False:\n"
+ ],
+ [
+  "r-pace-of-two-limits",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: pace of two limits",
+  "    settled = full and t - st.changed_at >= max(DWELL_S, PACE_FRAMES * pace_ms / 1000.0 + SETTLE_S)\n",
+  "    settled = full and t - st.changed_at >= DWELL_S\n"
+ ],
+ [
+  "r-pace-halves-not-compared",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: pace halves not compared",
+  "        settled = abs(second - first) <= 2 * small * here\n",
+  "        settled = True\n"
+ ],
+ [
+  "r-watch-ends-during-a-loss",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: watch ends during a loss",
+  "        elif st.loss_since is not None:\n            pass                                     # a loss that is being waited out: the watch ends when it has\n",
+  ""
+ ],
+ [
+  "r-dippy-median-against-rate",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: dippy median against rate",
+  "            got = st.before * st.typ / typ if st.before and st.typ else 1000.0 / typ\n",
+  "            got = 1000.0 / typ\n"
+ ],
+ [
+  "r-slow-against-the-whole-run",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: slow against the whole run",
+  "        slow += ms[i] > sorted(ms[i - N:i + N + 1])[N] * SLOW\n",
+  "        slow += ms[i] > sorted(ms)[len(ms) // 2] * SLOW\n"
+ ],
+ [
+  "r-failed-counts-everywhere",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: failed counts everywhere",
+  "    return t < entry[0] if ref > entry[2] else t - entry[4] < RETRY_MAX_S\n",
+  "    return True\n"
+ ],
+ [
+  "r-home-under-another-scenes-fails",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: home under another scenes fails",
+  "and _same(st.home_ref, ref) and all(w < st.home for w in under if _same(st.fail[w][2], ref))):",
+  "and _same(st.home_ref, ref) and all(w < st.home for w in under)):"
+ ],
+ [
+  "r-band-not-swapped-back",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: band not swapped back",
+  "            (st.lo, st.hi, st.ratio, st.ref, _, st.band_at, st.free_w), st.was = st.was, None\n",
+  "            pass\n"
+ ],
+ [
+  "r-chain-without-end",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: chain without end",
+  "            elif st.chain >= CHAIN:\n",
+  "            elif False:\n"
+ ],
+ [
+  "r-rise-look-when-the-target-is-met",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: rise look when the target is met",
+  "        if binds and (jump or (over and not met)):\n",
+  "        if binds and (jump or over):\n"
+ ],
+ [
+  "r-back-off-not-restarted-at-home",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: back off not restarted at home",
+  "            st.home is not None and _same(st.home_ref, ref) and not _same(st.miss_ref, ref))):",
+  "            False)):"
+ ],
+ [
+  "r-starving-step-taken-back-unjudged",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: starving step taken back unjudged",
+  "if silent or cur is None or pace_ms is None or (off and st.mode != \"probe\"):",
+  "if silent or cur is None or pace_ms is None or off:"
+ ],
+ [
+  "r-no-look-after-a-loading-screen",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no look after a loading screen",
+  "    if st.gap_s >= SHIFT_S and not obs.thermal:      # after",
+  "    if False:                                        # after"
+ ],
+ [
+  "r-look-in-the-same-place-not-taken-into-the-band",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: look in the same place not taken into the band",
+  "        else:\n            _take(st, was)\n",
+  "        else:\n            st.lo = st.hi = was\n"
+ ],
+ [
+  "r-band-of-another-place-taken-into-the-band",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: band of another place taken into the band",
+  "        if st.lo is not None and before is not None and abs(now - before) > 2 * small * before:",
+  "        if False:"
+ ],
+ [
+  "r-menu-sign-by-the-package-draw",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: menu sign by the package draw",
+  "        if free and st.bound:\n            st.scene_at = t\n",
+  "        if False:\n            st.scene_at = t\n"
+ ],
+ [
+  "r-kept-band-swapped-both-ways",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: kept band swapped both ways",
+  "(st.lo, st.hi, st.ratio, st.ref, _, st.band_at, st.free_w), st.was = st.was, None",
+  "(st.lo, st.hi, st.ratio, st.ref, _, st.band_at, st.free_w), st.was = st.was, (st.lo, st.hi, st.ratio, st.ref, t, st.band_at, st.free_w)"
+ ],
+ [
+  "r-band-taken-under-a-low-draw-trusted",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: band taken under a low draw trusted",
+  "is known here\n    if st.free_w == st.limit and obs.draw_w is not None and obs.draw_w > st.limit - 0.5:",
+  "is known here\n    if False:"
+ ],
+ [
+  "r-frames-over-the-target-are-another-scene",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: frames over the target are another scene",
+  "abs(min(here, cfg.target) - min(st.scene_fps, cfg.target)) >= SHIFT * min(\n            st.scene_fps, cfg.target)",
+  "abs(here - st.scene_fps) >= SHIFT * (\n            st.scene_fps)"
+ ],
+ [
+  "r-met-pace-booked-as-the-full-limits",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: met pace booked as the full limits",
+  "            elif st.ref is None or cfg.target > st.ref:\n                st.ref = cfg.target",
+  "            elif st.ref is None or level > st.ref:\n                st.ref = level"
+ ],
+ [
+  "r-failure-booked-over-the-target",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: failure booked over the target",
+  "        ref = min(ref, cfg.target) if ref is not None else ref           # (frames over your target, as _hold's)\n",
+  ""
+ ],
+ [
+  "r-raised-floor-leaves-the-watch",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: raised floor leaves the watch",
+  "            s.gov.limit = s.learned.tdp\n            governor.drop(s.gov)\n",
+  "            s.gov.limit = s.learned.tdp\n"
+ ],
+ [
+  "r-frontend-own-slot-needs-a-base",
+  "main.py",
+  "rule taken out: frontend own slot needs a base",
+  "if \"#\" not in key or any(v is not None for k, v in self.profiles.own(key, plugged).items() if k != \"learned\"):",
+  "if \"#\" not in key or self.profiles.own(key, plugged).get(\"base\"):"
+ ],
+ [
+  "r-failure-in-a-lighter-scene-counts-on",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: failure in a lighter scene counts on",
+  "        n = was[1] + 1 if was and not _lighter(was[2], ref) else 1",
+  "        n = was[1] + 1 if was else 1"
+ ],
+ [
+  "r-bursts-of-slow-frames-are-the-limits",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: bursts of slow frames are the limits",
+  "_edge(mine, st.base_slow)\n                and not _burst(mine)):\n",
+  "_edge(mine, st.base_slow)):\n"
+ ],
+ [
+  "r-fall-at-the-full-limit-booked-per-crossing",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: fall at the full limit booked per crossing",
+  "(_fps(list(st.pace)[-2 * N:]) >= need * (1 - small) or t - st.free_loss > DIP_MAX_S)",
+  "cur >= need * (1 - clear)"
+ ],
+ [
+  "r-game-that-dips-not-judged-on-slow-frames-1",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out, place 1: game that dips not judged on slow frames",
+  "        slow = _edge(st.watch, st.base_slow or 0.0) if seen >= DWELL_S / 2 else 0",
+  "        slow = _edge(st.watch, st.base_slow or 0.0) if seen >= DWELL_S / 2 and not dippy else 0"
+ ],
+ [
+  "r-game-that-dips-not-judged-on-slow-frames-2",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out, place 2: game that dips not judged on slow frames",
+  "        if (settled and waited and len(mine) >= 3 * N and st.base_slow is not None and _edge(mine, st.base_slow)\n",
+  "        if (settled and not dippy and waited and len(mine) >= 3 * N and st.base_slow is not None and _edge(mine, st.base_slow)\n"
+ ],
+ [
+  "r-slow-share-before-a-look-over-all-frames",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: slow share before a look over all frames",
+  "                st.lost, st.lost_slow = here, _slow(mine)\n",
+  "                st.lost, st.lost_slow = here, _edge(mine, st.base_slow) / len(mine)\n"
+ ],
+ [
+  "r-look-from-3-percent-over-the-band",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: look from 3 percent over the band",
+  "ABOVE = 0.03 ",
+  "ABOVE = 0.05 "
+ ],
+ [
+  "r-failed-step-with-far-more-frames-at-the-full-limit-is-another-scene",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: failed step with far more frames at the full limit is another scene",
+  "        if st.before and now >= st.before * (1 - CLEAR) and st.before >= want:",
+  "        if st.before and now >= st.before * (1 - CLEAR):"
+ ],
+ [
+  "r-far-slower-pace-with-the-chip-free-waits-as-a-new-scene",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: far slower pace with the chip free waits as a new scene",
+  "            if free:\n                st.scene_at = t\n",
+  ""
+ ],
+ [
+  "r-far-slower-pace-that-holds-the-chip-is-stepped-in-at-once",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: far slower pace that holds the chip is stepped in at once",
+  "            if free:\n                st.scene_at = t\n",
+  "            st.scene_at = t\n"
+ ],
+ [
+  "r-second-try-flag-reset-when-the-try-failed",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: second try flag reset when the try failed",
+  "            st.retest = False                        # (a loss that was waited out is waited for no more at the limit before)\n",
+  ""
+ ],
+ [
+  "r-second-try-loss-in-a-game-that-dips-is-not-waited-out",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: second try loss in a game that dips is not waited out",
+  "        if quick and dippy and not st.retest:",
+  "        if quick and dippy:"
+ ],
+ [
+  "r-step-taken-back-when-the-frames-jump",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: step taken back when the frames jump",
+  "    up = _jumped(st.watch, st.before, clear) if st.mode == \"probe\" and st.before else None",
+  "    up = None"
+ ],
+ [
+  "r-home-recorded-only-from-a-settled-pace-in-the-band",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: home recorded only from a settled pace in the band",
+  "    if st.limit < top and settled and not over and t - st.changed_at >= HOME_S and st.lo is not None and (",
+  "    if st.limit < top and t - st.changed_at >= HOME_S and st.lo is not None and ("
+ ],
+ [
+  "r-a-fall-inside-the-margin-is-a-loss",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a fall inside the margin is a loss",
+  "    return min(st.lo, _goal_at(st.lo / st.ratio, cfg) * (1 + SUSTAINED))     # (answered at that goal, not under it)\n",
+  "    return st.lo\n"
+ ],
+ [
+  "r-edge-watt-judged-at-once",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: edge watt judged at once",
+  "        waited = (not st.edged or st.changed_at > st.edged[-1] or len(mine) >= SLOW_FRAMES\n                  or t - st.changed_at >= SLOW_MAX_S)\n",
+  "        waited = True\n"
+ ],
+ [
+  "r-two-frame-rates-a-look-each-time",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: two frame rates a look each time",
+  "            if st.seen_hi is not None and t - st.seen_at < SCENE_S and pace <= st.seen_hi * (1 + ABOVE):\n",
+  "            if False:\n"
+ ],
+ [
+  "r-a-failed-step-forgets-what-the-limit-knew",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a failed step forgets what the limit knew",
+  "        st.lo, st.hi, st.ratio, st.was, st.seen_hi = st.kept\n",
+  "        st.lo, st.hi, st.ratio = st.kept[:3]\n"
+ ],
+ [
+  "r-band-of-a-short-visit-to-a-slower-place-kept",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: band of a short visit to a slower place kept",
+  "            keep = now < before or t - st.band_at >= SCENE_S\n",
+  "            keep = True\n"
+ ],
+ [
+  "r-kept-band-without-end",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: kept band without end",
+  "    if st.was is not None and t - st.was[4] >= SCENE_S:\n",
+  "    if False:\n"
+ ],
+ [
+  "r-guards-watts-back-keep-the-band",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: guards watts back keep the band",
+  "        st.ref = None                                # known, and nothing that was measured under the cap says it\n        _unknown(st)                                 # (under its clock cap: when that goes, autotune.thermal_clock)\n",
+  "        pass\n"
+ ],
+ [
+  "r-look-after-steps-that-held",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: look after steps that held",
+  "            elif st.chain >= CHAIN:\n                st.chain = 0\n",
+  "            elif st.chain >= CHAIN:\n                st.chain, st.lost, st.lost_slow = 0, held, 0.0\n                watch(\"check\", top, \"checking what the full limit gives\", \"rise\")\n                return act\n            elif False:\n"
+ ],
+ [
+  "r-nothing-known-at-a-limit-the-package-does-not-use-is-a-fall",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: nothing known at a limit the package does not use is a fall",
+  "    if st.lo is None and st.limit < top and obs.draw_w is not None and obs.draw_w <= st.limit - 2:\n        return act ",
+  "    if False:\n        return act "
+ ],
+ [
+  "r-band-that-comes-back-keeps-the-mark-of-the-band-left",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: band that comes back keeps the mark of the band left",
+  "(st.lo, st.hi, st.ratio, st.ref, _, st.band_at, st.free_w), st.was = st.was, None",
+  "(st.lo, st.hi, st.ratio, st.ref, _, st.band_at, _), st.was = st.was, None"
+ ],
+ [
+  "r-band-set-aside-forgets-it-was-taken-free",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: band set aside forgets it was taken free",
+  "        st.was = (st.lo, st.hi, st.ratio, st.ref, st.t, st.band_at, st.free_w) if st.lo is not None else st.was\n",
+  "        st.was = (st.lo, st.hi, st.ratio, st.ref, st.t, st.band_at, None) if st.lo is not None else st.was\n"
+ ],
+ [
+  "r-pause-under-the-clock-cap-forgets",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: pause under the clock cap forgets",
+  "    if st.gap_s >= SHIFT_S and not obs.thermal:      # after",
+  "    if st.gap_s >= SHIFT_S:                          # after"
+ ],
+ [
+  "r-seen-pace-never-gets-old",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: seen pace never gets old",
+  "st.seen_hi is not None and t - st.seen_at < SCENE_S and pace",
+  "st.seen_hi is not None and pace"
+ ],
+ [
+  "r-nothing-known-keeps-the-seen-pace",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: nothing known keeps the seen pace",
+  "    st.lo = st.hi = st.ratio = st.was = st.seen_hi = st.free_w = None\n",
+  "    st.lo = st.hi = st.ratio = st.was = st.free_w = None\n"
+ ],
+ [
+  "r-watts-back-under-the-clock-cap-forget",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: watts back under the clock cap forget",
+  "    if st.top is not None and top > st.top and not obs.thermal:      # the guard",
+  "    if st.top is not None and top > st.top:                          # the guard"
+ ],
+ [
+  "r-no-look-by-the-clock",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no look by the clock",
+  "                and (st.full_at is None or t - st.full_at >= CHECK_MAX_S)):\n",
+  "                and False):\n"
+ ],
+ [
+  "r-look-by-the-clock-with-the-target-in-reach",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: look by the clock with the target in reach",
+  " and need < cfg.target * (1 - TOL)\n                and (st.full_at is None",
+  "\n                and (st.full_at is None"
+ ],
+ [
+  "r-a-menus-frames-count-as-the-full-limit",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a menus frames count as the full limit",
+  "                st.full_at = t if st.limit >= top else st.full_at\n",
+  "                st.full_at = t\n"
+ ],
+ [
+  "r-pace-after-a-pause-has-the-frames-before-it",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: pace after a pause has the frames before it",
+  "        if silent and st.gap_s >= SHIFT_S:           # ... and of another place, maybe: its pace is of its own frames\n            st.pace.clear(), st.last.clear(), st.recent.clear()\n",
+  ""
+ ],
+ [
+  "r-end-of-the-clock-cap-keeps-what-was-measured",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: end of the clock cap keeps what was measured",
+  "        if s.gov and pct is None:\n            governor.forget(s.gov)                   # (also the band and the ratio: they were measured under the cap)\n        elif s.gov:\n",
+  "        if s.gov:\n"
+ ],
+ [
+  "r-no-look-after-a-menu",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no look after a menu",
+  "                st.full_at = -1e9                    # (the place after a menu",
+  "                pass                                 # (the place after a menu"
+ ],
+ [
+  "r-look-after-every-band-that-comes-back",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: look after every band that comes back",
+  "            if menu:\n",
+  "            if True:\n"
+ ],
+ [
+  "r-autotunes-maximum-not-the-limit",
+  "main.py",
+  "rule taken out: autotunes maximum not the limit",
+  "        if self._autotune_governs(pk[\"prof\"], plugged) and self.settings.get(\"autotune_max\"):\n",
+  "        if False:\n"
+ ],
+ [
+  "r-look-by-the-clock-where-the-package-is-under-the-limit",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: look by the clock where the package is under the limit",
+  "        if (settled and binds and st.free_w != st.limit and st.limit < top - 1 and need < cfg.target * (1 - TOL)\n",
+  "        if (settled and binds and st.limit < top - 1 and need < cfg.target * (1 - TOL)\n"
+ ],
+ [
+  "r-step-down-holds-at-the-goal",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: step down holds at the goal",
+  "        line = want * (1 + CLEAR) if got is not None and most and got < most * (1 - small) else want\n",
+  "        line = want\n"
+ ],
+ [
+  "r-wobble-over-the-goal-also-where-the-full-limit-gives-no-more",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: wobble over the goal also where the full limit gives no more",
+  "        line = want * (1 + CLEAR) if got is not None and most and got < most * (1 - small) else want\n",
+  "        line = want * (1 + CLEAR) if got is not None else want\n"
+ ],
+ [
+  "r-what-a-step-cost-against-the-limit-before-only",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: what a step cost against the limit before only",
+  "        most = full or st.before\n",
+  "        most = st.before\n"
+ ],
+ [
+  "r-what-a-step-cost-against-the-full-limit-only",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: what a step cost against the full limit only",
+  "        most = full or st.before\n",
+  "        most = full\n"
+ ],
+ [
+  "r-frame-rate-falling-at-the-full-limit-keeps-it",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: frame rate falling at the full limit keeps it",
+  "    if (st.mode == \"recover\" and st.tried is None and third >= N\n            and _fps(st.watch[-third:]) < _fps(st.watch[:third]) * (1 - clear)):\n",
+  "    if False:\n"
+ ],
+ [
+  "r-second-loss-after-the-scene-was-the-answer-keeps-the-full-limit",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: second loss after the scene was the answer keeps the full limit",
+  "        if st.mode == \"recover\" and st.wrote_at - st.said[0] < AFTER_LOSS_S and now < st.said[1] * (1 - clear):\n",
+  "        if False:\n"
+ ],
+ [
+  "r-second-loss-keeps-the-full-limit-also-at-the-frame-rate-of-the-last-look",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: second loss keeps the full limit also at the frame rate of the last look",
+  "        if st.mode == \"recover\" and st.wrote_at - st.said[0] < AFTER_LOSS_S and now < st.said[1] * (1 - clear):\n",
+  "        if st.mode == \"recover\" and st.wrote_at - st.said[0] < AFTER_LOSS_S:\n"
+ ],
+ [
+  "r-one-burst-in-a-step-booked-as-the-limits",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: one burst in a step booked as the limits",
+  "        edge = slow > 0 and not _burst(st.watch)     # (one burst is the game's own, as at a held limit)\n",
+  "        edge = slow > 0\n"
+ ],
+ [
+  "r-autotune-off-gives-the-tdp-setting-back-under-the-guards-step",
+  "main.py",
+  "rule taken out: autotune off gives the tdp setting back under the guards step",
+  "self.autotune.pause(\"autotune switched off\", limit=w)",
+  "self.autotune.pause(\"autotune switched off\")"
+ ],
+ [
+  "r-a-game-autotune-was-switched-on-in-is-not-governed",
+  "main.py",
+  "rule taken out: a game autotune was switched on in is not governed",
+  "\n                    and not (self.running_appid is not None and getattr(self, \"_autotune_late\", False)))",
+  ")"
+ ],
+ [
+  "r-no-second-try-of-the-level-the-guards-cap-held",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no second try of the level the guards cap held",
+  "            st.retested[st.limit] = t                # (the cap held it there",
+  "            pass                                     # (the cap held it there"
+ ],
+ [
+  "r-second-loss-window-from-the-write-of-the-full-limit",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: second loss window from the write of the full limit",
+  "st.wrote_at - st.said[0] < AFTER_LOSS_S and now",
+  "st.since - st.said[0] < AFTER_LOSS_S and now"
+ ],
+ [
+  "r-a-steps-band-at-a-drawn-limit-is-not-free",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a steps band at a drawn limit is not free",
+  "            if st.free_w == st.limit and obs.draw_w is not None and obs.draw_w > st.limit - 0.5:\n                st.free_w = None",
+  "            if False:\n                st.free_w = None"
+ ],
+ [
+  "r-guard-in-the-menus-steps-up-to-autotunes-maximum",
+  "main.py",
+  "rule taken out: guard in the menus steps up to autotunes maximum",
+  "            limit = pk[\"tdp\"] if self.running_appid else self._limit_overrides(pk, plugged).get(\"tdp\", pk[\"tdp\"])\n",
+  "            limit = pk[\"tdp\"]\n"
+ ],
+ [
+  "r-a-watch-in-flight-ends-where-forget-drops-what-was-known",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a watch in flight ends where forget drops what was known",
+  "    if st.mode != \"hold\":\n        drop(st)                                     # (a watch in flight: what it is judged against is gone)\n",
+  ""
+ ],
+ [
+  "r-a-watch-in-flight-ends-where-the-guard-gives-watts-back",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a watch in flight ends where the guard gives watts back",
+  "            st.retested[st.limit] = t                # (the cap held it there: a loss at it is no dip of the game's own)\n        if st.mode != \"hold\":\n            drop(st)\n",
+  "            st.retested[st.limit] = t                # (the cap held it there: a loss at it is no dip of the game's own)\n"
+ ],
+ [
+  "r-only-the-level-the-cap-held-is-marked-tried-once-more",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: only the level the cap held is marked tried once more",
+  "        if st.limit >= st.top:\n            st.retested[st.limit] = t",
+  "        if True:\n            st.retested[st.limit] = t"
+ ],
+ [
+  "r-start-level-under-autotunes-own-ceiling",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: start level under autotunes own ceiling",
+  "s.floor_tdp, s.learned.ceiling or s.ceiling_tdp)",
+  "s.floor_tdp, s.ceiling_tdp)"
+ ],
+ [
+  "r-guard-in-a-game-without-a-session-steps-up-to-the-pick",
+  "main.py",
+  "rule taken out: guard in a game without a session steps up to the pick",
+  "            limit = pk[\"tdp\"] if self.running_appid else self._limit_overrides",
+  "            limit = self._limit_overrides"
+ ],
+ [
+  "r-panel-governs-in-a-game-only-with-a-session",
+  "main.py",
+  "rule taken out: panel governs in a game only with a session",
+  "        st[\"autotune_governs\"] = self._autotune_governs(pk[\"prof\"], plugged) and (\n            self.running_appid is None or self.autotune.session is not None)\n",
+  "        st[\"autotune_governs\"] = self._autotune_governs(pk[\"prof\"], plugged)\n"
+ ],
+ [
+  "r-autotune-off-without-a-session-writes-nothing",
+  "main.py",
+  "rule taken out: autotune off without a session writes nothing",
+  "                self.autotune.pause(\"autotune switched off\", limit=w)\n",
+  "                self.autotune.pause(\"autotune switched off\", limit=w)\n                if w is not None and not self.autotune.running():\n                    self.power.set_tdp(w, plugged)\n"
+ ],
+ [
+  "r-an-esde-game-after-the-switch-is-governed",
+  "main.py",
+  "rule taken out: an esde game after the switch is governed",
+  "            self._autotune_late = getattr(self, \"_autotune_late\", False) and ev[\"event\"] != \"start\"\n",
+  ""
+ ],
+ [
+  "r-a-new-target-does-not-govern-a-late-game",
+  "main.py",
+  "rule taken out: a new target does not govern a late game",
+  "        if not (self.running_appid is not None and getattr(self, \"_autotune_late\", False)):\n            self.autotune.set_target(t, auto_fps)\n",
+  "        if True:\n            self.autotune.set_target(t, auto_fps)\n"
+ ],
+ [
+  "r-a-failed-level-far-over-the-draw-does-not-count",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a failed level far over the draw does not count",
+  "\n             and (obs.draw_w is None or obs.draw_w + 2 >= w or ref is None or ref < st.fail[w][2])]\n",
+  "]\n"
+ ],
+ [
+  "c-N-x2",
+  "py_modules/clawdeck/governor.py",
+  "N 10 -> 20",
+  "\nN = 10",
+  "\nN = 20"
+ ],
+ [
+  "c-N-half",
+  "py_modules/clawdeck/governor.py",
+  "N 10 -> 5",
+  "\nN = 10",
+  "\nN = 5"
+ ],
+ [
+  "c-CLEAR-x2",
+  "py_modules/clawdeck/governor.py",
+  "CLEAR 0.03 -> 0.06",
+  "\nCLEAR = 0.03",
+  "\nCLEAR = 0.06"
+ ],
+ [
+  "c-CLEAR-half",
+  "py_modules/clawdeck/governor.py",
+  "CLEAR 0.03 -> 0.015",
+  "\nCLEAR = 0.03",
+  "\nCLEAR = 0.015"
+ ],
+ [
+  "c-SUSTAINED-x2",
+  "py_modules/clawdeck/governor.py",
+  "SUSTAINED 0.01 -> 0.02",
+  "\nSUSTAINED = 0.01",
+  "\nSUSTAINED = 0.02"
+ ],
+ [
+  "c-SUSTAINED-half",
+  "py_modules/clawdeck/governor.py",
+  "SUSTAINED 0.01 -> 0.005",
+  "\nSUSTAINED = 0.01",
+  "\nSUSTAINED = 0.005"
+ ],
+ [
+  "c-NOISE-x2",
+  "py_modules/clawdeck/governor.py",
+  "NOISE 2.5 -> 5.0",
+  "\nNOISE = 2.5",
+  "\nNOISE = 5.0"
+ ],
+ [
+  "c-NOISE-half",
+  "py_modules/clawdeck/governor.py",
+  "NOISE 2.5 -> 1.25",
+  "\nNOISE = 2.5",
+  "\nNOISE = 1.25"
+ ],
+ [
+  "c-HITCH-x2",
+  "py_modules/clawdeck/governor.py",
+  "HITCH 2.5 -> 5.0",
+  "\nHITCH = 2.5",
+  "\nHITCH = 5.0"
+ ],
+ [
+  "c-HITCH-half",
+  "py_modules/clawdeck/governor.py",
+  "HITCH 2.5 -> 1.25",
+  "\nHITCH = 2.5",
+  "\nHITCH = 1.25"
+ ],
+ [
+  "c-PATIENT_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "PATIENT_S 1.0 -> 2.0",
+  "\nPATIENT_S = 1.0",
+  "\nPATIENT_S = 2.0"
+ ],
+ [
+  "c-PATIENT_S-half",
+  "py_modules/clawdeck/governor.py",
+  "PATIENT_S 1.0 -> 0.5",
+  "\nPATIENT_S = 1.0",
+  "\nPATIENT_S = 0.5"
+ ],
+ [
+  "c-DIPS-x2",
+  "py_modules/clawdeck/governor.py",
+  "DIPS 2 -> 4",
+  "\nDIPS, DIPS_S = 2, 300.0",
+  "\nDIPS, DIPS_S = 4, 300.0"
+ ],
+ [
+  "c-DIPS-half",
+  "py_modules/clawdeck/governor.py",
+  "DIPS 2 -> 1",
+  "\nDIPS, DIPS_S = 2, 300.0",
+  "\nDIPS, DIPS_S = 1, 300.0"
+ ],
+ [
+  "c-DIPS_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "DIPS_S 300.0 -> 600.0",
+  "\nDIPS, DIPS_S = 2, 300.0",
+  "\nDIPS, DIPS_S = 2, 600.0"
+ ],
+ [
+  "c-DIPS_S-half",
+  "py_modules/clawdeck/governor.py",
+  "DIPS_S 300.0 -> 150.0",
+  "\nDIPS, DIPS_S = 2, 300.0",
+  "\nDIPS, DIPS_S = 2, 150.0"
+ ],
+ [
+  "c-DIP_MAX_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "DIP_MAX_S 2.0 -> 4.0",
+  "\nDIP_MAX_S = 2.0",
+  "\nDIP_MAX_S = 4.0"
+ ],
+ [
+  "c-DIP_MAX_S-half",
+  "py_modules/clawdeck/governor.py",
+  "DIP_MAX_S 2.0 -> 1.0",
+  "\nDIP_MAX_S = 2.0",
+  "\nDIP_MAX_S = 1.0"
+ ],
+ [
+  "c-PACE_FRAMES-x2",
+  "py_modules/clawdeck/governor.py",
+  "PACE_FRAMES 60 -> 120",
+  "\nPACE_FRAMES = 60",
+  "\nPACE_FRAMES = 120"
+ ],
+ [
+  "c-PACE_FRAMES-half",
+  "py_modules/clawdeck/governor.py",
+  "PACE_FRAMES 60 -> 30",
+  "\nPACE_FRAMES = 60",
+  "\nPACE_FRAMES = 30"
+ ],
+ [
+  "c-TOL-x2",
+  "py_modules/clawdeck/governor.py",
+  "TOL 0.05 -> 0.1",
+  "\nTOL = 0.05",
+  "\nTOL = 0.1"
+ ],
+ [
+  "c-TOL-half",
+  "py_modules/clawdeck/governor.py",
+  "TOL 0.05 -> 0.025",
+  "\nTOL = 0.05",
+  "\nTOL = 0.025"
+ ],
+ [
+  "c-REACHED-x2",
+  "py_modules/clawdeck/governor.py",
+  "REACHED 0.99 -> 1.98",
+  "\nREACHED = 0.99",
+  "\nREACHED = 1.98"
+ ],
+ [
+  "c-REACHED-half",
+  "py_modules/clawdeck/governor.py",
+  "REACHED 0.99 -> 0.495",
+  "\nREACHED = 0.99",
+  "\nREACHED = 0.495"
+ ],
+ [
+  "c-SLOW-x2",
+  "py_modules/clawdeck/governor.py",
+  "SLOW 1.10 -> 1.2",
+  "\nSLOW = 1.10",
+  "\nSLOW = 1.2"
+ ],
+ [
+  "c-SLOW-half",
+  "py_modules/clawdeck/governor.py",
+  "SLOW 1.10 -> 1.05",
+  "\nSLOW = 1.10",
+  "\nSLOW = 1.05"
+ ],
+ [
+  "c-EDGE-x2",
+  "py_modules/clawdeck/governor.py",
+  "EDGE 0.03 -> 0.06",
+  "\nEDGE = 0.03",
+  "\nEDGE = 0.06"
+ ],
+ [
+  "c-EDGE-half",
+  "py_modules/clawdeck/governor.py",
+  "EDGE 0.03 -> 0.015",
+  "\nEDGE = 0.03",
+  "\nEDGE = 0.015"
+ ],
+ [
+  "c-SLOW_FRAMES-x2",
+  "py_modules/clawdeck/governor.py",
+  "SLOW_FRAMES 240 -> 480",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 240, 10.0",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 480, 10.0"
+ ],
+ [
+  "c-SLOW_FRAMES-half",
+  "py_modules/clawdeck/governor.py",
+  "SLOW_FRAMES 240 -> 120",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 240, 10.0",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 120, 10.0"
+ ],
+ [
+  "c-SLOW_MAX_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "SLOW_MAX_S 10.0 -> 20.0",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 240, 10.0",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 240, 20.0"
+ ],
+ [
+  "c-SLOW_MAX_S-half",
+  "py_modules/clawdeck/governor.py",
+  "SLOW_MAX_S 10.0 -> 5.0",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 240, 10.0",
+  "\nSLOW_FRAMES, SLOW_MAX_S = 240, 5.0"
+ ],
+ [
+  "c-SETTLE_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "SETTLE_S 0.15 -> 0.3",
+  "\nSETTLE_S = 0.15",
+  "\nSETTLE_S = 0.3"
+ ],
+ [
+  "c-SETTLE_S-half",
+  "py_modules/clawdeck/governor.py",
+  "SETTLE_S 0.15 -> 0.075",
+  "\nSETTLE_S = 0.15",
+  "\nSETTLE_S = 0.075"
+ ],
+ [
+  "c-DWELL_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "DWELL_S 2.5 -> 5.0",
+  "\nDWELL_S = 2.5",
+  "\nDWELL_S = 5.0"
+ ],
+ [
+  "c-DWELL_S-half",
+  "py_modules/clawdeck/governor.py",
+  "DWELL_S 2.5 -> 1.25",
+  "\nDWELL_S = 2.5",
+  "\nDWELL_S = 1.25"
+ ],
+ [
+  "c-BACK_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "BACK_S 1.0 -> 2.0",
+  "\nBACK_S = 1.0",
+  "\nBACK_S = 2.0"
+ ],
+ [
+  "c-BACK_S-half",
+  "py_modules/clawdeck/governor.py",
+  "BACK_S 1.0 -> 0.5",
+  "\nBACK_S = 1.0",
+  "\nBACK_S = 0.5"
+ ],
+ [
+  "c-HOLD_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "HOLD_S 10.0 -> 20.0",
+  "\nHOLD_S = 10.0",
+  "\nHOLD_S = 20.0"
+ ],
+ [
+  "c-HOLD_S-half",
+  "py_modules/clawdeck/governor.py",
+  "HOLD_S 10.0 -> 5.0",
+  "\nHOLD_S = 10.0",
+  "\nHOLD_S = 5.0"
+ ],
+ [
+  "c-AFTER_LOSS_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "AFTER_LOSS_S 5.0 -> 10.0",
+  "\nAFTER_LOSS_S = 5.0",
+  "\nAFTER_LOSS_S = 10.0"
+ ],
+ [
+  "c-AFTER_LOSS_S-half",
+  "py_modules/clawdeck/governor.py",
+  "AFTER_LOSS_S 5.0 -> 2.5",
+  "\nAFTER_LOSS_S = 5.0",
+  "\nAFTER_LOSS_S = 2.5"
+ ],
+ [
+  "c-AFTER_LOSS_MAX_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "AFTER_LOSS_MAX_S 300.0 -> 600.0",
+  "\nAFTER_LOSS_MAX_S = 300.0",
+  "\nAFTER_LOSS_MAX_S = 600.0"
+ ],
+ [
+  "c-AFTER_LOSS_MAX_S-half",
+  "py_modules/clawdeck/governor.py",
+  "AFTER_LOSS_MAX_S 300.0 -> 150.0",
+  "\nAFTER_LOSS_MAX_S = 300.0",
+  "\nAFTER_LOSS_MAX_S = 150.0"
+ ],
+ [
+  "c-HOME_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "HOME_S 20.0 -> 40.0",
+  "\nHOME_S = 20.0",
+  "\nHOME_S = 40.0"
+ ],
+ [
+  "c-HOME_S-half",
+  "py_modules/clawdeck/governor.py",
+  "HOME_S 20.0 -> 10.0",
+  "\nHOME_S = 20.0",
+  "\nHOME_S = 10.0"
+ ],
+ [
+  "c-STEP_W-x2",
+  "py_modules/clawdeck/governor.py",
+  "STEP_W 2 -> 4",
+  "\nSTEP_W = 2",
+  "\nSTEP_W = 4"
+ ],
+ [
+  "c-STEP_W-half",
+  "py_modules/clawdeck/governor.py",
+  "STEP_W 2 -> 1",
+  "\nSTEP_W = 2",
+  "\nSTEP_W = 1"
+ ],
+ [
+  "c-CHAIN-x2",
+  "py_modules/clawdeck/governor.py",
+  "CHAIN 3 -> 6",
+  "\nCHAIN = 3",
+  "\nCHAIN = 6"
+ ],
+ [
+  "c-CHAIN-half",
+  "py_modules/clawdeck/governor.py",
+  "CHAIN 3 -> 1",
+  "\nCHAIN = 3",
+  "\nCHAIN = 1"
+ ],
+ [
+  "c-RETRY_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "RETRY_S 120.0 -> 240.0",
+  "\nRETRY_S, RETRY_MAX_S = 120.0, 600.0",
+  "\nRETRY_S, RETRY_MAX_S = 240.0, 600.0"
+ ],
+ [
+  "c-RETRY_S-half",
+  "py_modules/clawdeck/governor.py",
+  "RETRY_S 120.0 -> 60.0",
+  "\nRETRY_S, RETRY_MAX_S = 120.0, 600.0",
+  "\nRETRY_S, RETRY_MAX_S = 60.0, 600.0"
+ ],
+ [
+  "c-RETRY_MAX_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "RETRY_MAX_S 600.0 -> 1200.0",
+  "\nRETRY_S, RETRY_MAX_S = 120.0, 600.0",
+  "\nRETRY_S, RETRY_MAX_S = 120.0, 1200.0"
+ ],
+ [
+  "c-RETRY_MAX_S-half",
+  "py_modules/clawdeck/governor.py",
+  "RETRY_MAX_S 600.0 -> 300.0",
+  "\nRETRY_S, RETRY_MAX_S = 120.0, 600.0",
+  "\nRETRY_S, RETRY_MAX_S = 120.0, 300.0"
+ ],
+ [
+  "c-RETRY_DWELL_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "RETRY_DWELL_S 10.0 -> 20.0",
+  "\nRETRY_DWELL_S = 10.0",
+  "\nRETRY_DWELL_S = 20.0"
+ ],
+ [
+  "c-RETRY_DWELL_S-half",
+  "py_modules/clawdeck/governor.py",
+  "RETRY_DWELL_S 10.0 -> 5.0",
+  "\nRETRY_DWELL_S = 10.0",
+  "\nRETRY_DWELL_S = 5.0"
+ ],
+ [
+  "c-ABOVE-x2",
+  "py_modules/clawdeck/governor.py",
+  "ABOVE 0.03 -> 0.06",
+  "\nABOVE = 0.03",
+  "\nABOVE = 0.06"
+ ],
+ [
+  "c-ABOVE-half",
+  "py_modules/clawdeck/governor.py",
+  "ABOVE 0.03 -> 0.015",
+  "\nABOVE = 0.03",
+  "\nABOVE = 0.015"
+ ],
+ [
+  "c-STEADY_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "STEADY_S 3.0 -> 6.0",
+  "\nSTEADY_S = 3.0",
+  "\nSTEADY_S = 6.0"
+ ],
+ [
+  "c-STEADY_S-half",
+  "py_modules/clawdeck/governor.py",
+  "STEADY_S 3.0 -> 1.5",
+  "\nSTEADY_S = 3.0",
+  "\nSTEADY_S = 1.5"
+ ],
+ [
+  "c-FREE_LOOKS-x2",
+  "py_modules/clawdeck/governor.py",
+  "FREE_LOOKS 5 -> 10",
+  "\nFREE_LOOKS = 5",
+  "\nFREE_LOOKS = 10"
+ ],
+ [
+  "c-FREE_LOOKS-half",
+  "py_modules/clawdeck/governor.py",
+  "FREE_LOOKS 5 -> 2",
+  "\nFREE_LOOKS = 5",
+  "\nFREE_LOOKS = 2"
+ ],
+ [
+  "c-BIND_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "BIND_S 3.0 -> 6.0",
+  "\nBIND_S, BIND_W = 3.0, 2.5",
+  "\nBIND_S, BIND_W = 6.0, 2.5"
+ ],
+ [
+  "c-BIND_S-half",
+  "py_modules/clawdeck/governor.py",
+  "BIND_S 3.0 -> 1.5",
+  "\nBIND_S, BIND_W = 3.0, 2.5",
+  "\nBIND_S, BIND_W = 1.5, 2.5"
+ ],
+ [
+  "c-BIND_W-x2",
+  "py_modules/clawdeck/governor.py",
+  "BIND_W 2.5 -> 5.0",
+  "\nBIND_S, BIND_W = 3.0, 2.5",
+  "\nBIND_S, BIND_W = 3.0, 5.0"
+ ],
+ [
+  "c-BIND_W-half",
+  "py_modules/clawdeck/governor.py",
+  "BIND_W 2.5 -> 1.25",
+  "\nBIND_S, BIND_W = 3.0, 2.5",
+  "\nBIND_S, BIND_W = 3.0, 1.25"
+ ],
+ [
+  "c-RISE_W-x2",
+  "py_modules/clawdeck/governor.py",
+  "RISE_W 0.3 -> 0.6",
+  "\nRISE_W = 0.3",
+  "\nRISE_W = 0.6"
+ ],
+ [
+  "c-RISE_W-half",
+  "py_modules/clawdeck/governor.py",
+  "RISE_W 0.3 -> 0.15",
+  "\nRISE_W = 0.3",
+  "\nRISE_W = 0.15"
+ ],
+ [
+  "c-SHIFT-x2",
+  "py_modules/clawdeck/governor.py",
+  "SHIFT 0.15 -> 0.3",
+  "\nSHIFT, SHIFT_S = 0.15, 5.0",
+  "\nSHIFT, SHIFT_S = 0.3, 5.0"
+ ],
+ [
+  "c-SHIFT-half",
+  "py_modules/clawdeck/governor.py",
+  "SHIFT 0.15 -> 0.075",
+  "\nSHIFT, SHIFT_S = 0.15, 5.0",
+  "\nSHIFT, SHIFT_S = 0.075, 5.0"
+ ],
+ [
+  "c-SHIFT_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "SHIFT_S 5.0 -> 10.0",
+  "\nSHIFT, SHIFT_S = 0.15, 5.0",
+  "\nSHIFT, SHIFT_S = 0.15, 10.0"
+ ],
+ [
+  "c-SHIFT_S-half",
+  "py_modules/clawdeck/governor.py",
+  "SHIFT_S 5.0 -> 2.5",
+  "\nSHIFT, SHIFT_S = 0.15, 5.0",
+  "\nSHIFT, SHIFT_S = 0.15, 2.5"
+ ],
+ [
+  "c-CHECK_MAX_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "CHECK_MAX_S 600.0 -> 1200.0",
+  "\nCHECK_MAX_S = 600.0",
+  "\nCHECK_MAX_S = 1200.0"
+ ],
+ [
+  "c-CHECK_MAX_S-half",
+  "py_modules/clawdeck/governor.py",
+  "CHECK_MAX_S 600.0 -> 300.0",
+  "\nCHECK_MAX_S = 600.0",
+  "\nCHECK_MAX_S = 300.0"
+ ],
+ [
+  "c-SCENE_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "SCENE_S 30.0 -> 60.0",
+  "\nSCENE_S = 30.0",
+  "\nSCENE_S = 60.0"
+ ],
+ [
+  "c-SCENE_S-half",
+  "py_modules/clawdeck/governor.py",
+  "SCENE_S 30.0 -> 15.0",
+  "\nSCENE_S = 30.0",
+  "\nSCENE_S = 15.0"
+ ],
+ [
+  "c-OFF_LO-x2",
+  "py_modules/clawdeck/governor.py",
+  "OFF_LO 0.35 -> 0.7",
+  "\nOFF_LO = 0.35",
+  "\nOFF_LO = 0.7"
+ ],
+ [
+  "c-OFF_LO-half",
+  "py_modules/clawdeck/governor.py",
+  "OFF_LO 0.35 -> 0.175",
+  "\nOFF_LO = 0.35",
+  "\nOFF_LO = 0.175"
+ ],
+ [
+  "c-ADOPT_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "ADOPT_S 5.0 -> 10.0",
+  "\nADOPT_S = 5.0",
+  "\nADOPT_S = 10.0"
+ ],
+ [
+  "c-ADOPT_S-half",
+  "py_modules/clawdeck/governor.py",
+  "ADOPT_S 5.0 -> 2.5",
+  "\nADOPT_S = 5.0",
+  "\nADOPT_S = 2.5"
+ ],
+ [
+  "c-NO_FRAMES_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "NO_FRAMES_S 1.5 -> 3.0",
+  "\nNO_FRAMES_S = 1.5",
+  "\nNO_FRAMES_S = 3.0"
+ ],
+ [
+  "c-NO_FRAMES_S-half",
+  "py_modules/clawdeck/governor.py",
+  "NO_FRAMES_S 1.5 -> 0.75",
+  "\nNO_FRAMES_S = 1.5",
+  "\nNO_FRAMES_S = 0.75"
+ ],
+ [
+  "c-RECENT_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "RECENT_S 10.0 -> 20.0",
+  "\nRECENT_S = 10.0",
+  "\nRECENT_S = 20.0"
+ ],
+ [
+  "c-RECENT_S-half",
+  "py_modules/clawdeck/governor.py",
+  "RECENT_S 10.0 -> 5.0",
+  "\nRECENT_S = 10.0",
+  "\nRECENT_S = 5.0"
+ ],
+ [
+  "c-LOOK_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "LOOK_S 0.5 -> 1.0",
+  "\nLOOK_S, WATCH_S = 0.5, 0.1",
+  "\nLOOK_S, WATCH_S = 1.0, 0.1"
+ ],
+ [
+  "c-LOOK_S-half",
+  "py_modules/clawdeck/governor.py",
+  "LOOK_S 0.5 -> 0.25",
+  "\nLOOK_S, WATCH_S = 0.5, 0.1",
+  "\nLOOK_S, WATCH_S = 0.25, 0.1"
+ ],
+ [
+  "c-WATCH_S-x2",
+  "py_modules/clawdeck/governor.py",
+  "WATCH_S 0.1 -> 0.2",
+  "\nLOOK_S, WATCH_S = 0.5, 0.1",
+  "\nLOOK_S, WATCH_S = 0.5, 0.2"
+ ],
+ [
+  "c-WATCH_S-half",
+  "py_modules/clawdeck/governor.py",
+  "WATCH_S 0.1 -> 0.05",
+  "\nLOOK_S, WATCH_S = 0.5, 0.1",
+  "\nLOOK_S, WATCH_S = 0.5, 0.05"
+ ]
+]
