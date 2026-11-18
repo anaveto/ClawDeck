@@ -1030,6 +1030,26 @@ def test_a_frontend_game_has_no_launch_file_of_its_own(plugin, monkeypatch):
     assert "42" in seen and "3119184808#ps3/Ratchet" not in seen
 
 
+@pytest.mark.parametrize("cmdline", [None, "reaper\0SteamLaunch\0AppId=7\0Install=1\0--\0iscriptevaluator",
+                                     "reaper\0SteamLaunch\0AppId=70\0--\0game",
+                                     "reaper\0SteamLaunch\0AppId=7\0--\0game"])
+@pytest.mark.parametrize("resync", [False, True])
+def test_a_game_the_panel_reports_starts_only_with_its_process(plugin, monkeypatch, tmp_path, resync, cmdline):
+    """The panel reports Steam's running app when it opens (Decky restarted in a game): that game starts once Steam
+    runs its process (AppId=7, not the install script's). Opened while a launch waited on Steam's shader processing,
+    Autotune governed Steam's dialog. Steam's app lifetime event starts the game as before."""
+    p = plugin
+    _w(str(tmp_path / "proc" / "1" / "cmdline"), "/usr/lib/systemd/systemd")
+    if cmdline:
+        _w(str(tmp_path / "proc" / "4242" / "cmdline"), cmdline)
+    monkeypatch.setattr(autotune, "PROC", str(tmp_path / "proc"))
+    assert p.run(p.set_tdp(26))["ok"]
+    p.run(p.game_started("7", True) if resync else p.game_started("7"))
+    started = not resync or cmdline == "reaper\0SteamLaunch\0AppId=7\0--\0game"
+    assert (p.running_appid == "7") == started and (p.autotune.session is not None) == started
+    assert started or p.chip() == 26, p.chip()
+
+
 def test_a_frontend_event_from_before_the_game_started_is_ignored(plugin):
     p = plugin
     esde = "3119184808"
@@ -1194,9 +1214,10 @@ def test_unplugging_during_and_after_a_game_follows_each_power_sources_pick(plug
     p.run(p.game_started("42"))
     _lower(p, 10)
     p.autotune.session.settled = True                              # it finished learning on battery
+    held = p.autotune.held_w()
     p.ac["plugged"] = True
     r = p.run(p.power_source_changed(True))
-    assert r["changed"] and p.chip() == 22 and p.autotune.session.ceiling_tdp == 35 and p.autotune.plugged
+    assert r["changed"] and p.chip() == held != 22 and p.autotune.session.ceiling_tdp == 35 and p.autotune.plugged
     assert p.profiles.own("42", False).get("learned")              # battery's learning kept in its own slot
     p.run(p.game_stopped("42"))
     assert p.chip() == 35                                          # exit on the charger: the plugged-in pick
@@ -1205,6 +1226,19 @@ def test_unplugging_during_and_after_a_game_follows_each_power_sources_pick(plug
     assert r["changed"] and p.chip() == 20                         # unplugged with no game: the battery pick
     r = p.run(p.resumed())
     assert r["reapplied"] and p.chip() == 20
+
+
+def test_a_game_that_stops_before_steam_reports_the_charger_saves_to_its_power_source(plugin):
+    """A game governed on battery; the charger goes in and the game stops before Steam reports it. What Autotune
+    learned goes to battery's slot, where it was learned, not to the charger's."""
+    p = plugin
+    p.ac["plugged"] = False
+    p.run(p.game_started("42"))
+    _lower(p, 10)
+    p.autotune.session.settled = True
+    p.ac["plugged"] = True
+    p.run(p.game_stopped("42"))
+    assert p.profiles.own("42", False).get("learned") and not p.profiles.own("42", True).get("learned")
 
 
 def test_autotune_saves_only_a_finished_result(fake_hw, monkeypatch):
@@ -2003,6 +2037,116 @@ def test_autotune_on_the_charger_switched_off_before_steam_reports_the_charger_o
     p.ac["plugged"] = False
     p.run(p.set_setting("autotune_plugged", False))
     assert p.autotune.session.paused and p.chip() == 26, (p.autotune.session.paused, p.chip())
+
+
+@pytest.mark.parametrize("action", ["tdp", "profile", "custom", "pl2"])
+def test_the_slider_a_profile_and_pl2_go_to_the_games_power_source_until_steam_reports_a_change(plugin, action):
+    """A game on battery with Autotune off; the charger goes in and Steam has not reported it. The TDP slider, a
+    profile pick and PL2 act on battery's slot, the one the panel shows, and the charger's stays as it was; after Steam's
+    report they act on the charger's. With no game they act on the charger's state."""
+    p = plugin
+    p.run(p.set_setting("autotune", False))
+    for plugged, w, pl2 in ((True, 26, 40), (False, 20, 24)):
+        p.ac["plugged"] = plugged
+        assert p.run(p.set_tdp(w))["ok"]
+        p.run(p.set_pl2(True, pl2))
+    p.run(p.game_started("7"))
+    for plugged in (False, True):
+        p.ac["plugged"] = True
+        assert p.run(p.power_slot())["plugged"] is plugged
+        if action == "tdp":
+            assert p.run(p.set_tdp(22 + plugged))["ok"]
+            got = {k: p.profiles.own("7", k).get("tdp") for k in (False, True)}
+            assert got == {False: 22, True: 23 if plugged else None} and p.chip() == 22 + plugged, got
+        elif action == "profile":
+            p.run(p.apply_profile("performance" if plugged else "balanced"))
+            got = {k: p.profiles.own("7", k).get("base") for k in (False, True)}
+            assert got == {False: "balanced", True: "performance" if plugged else None}, got
+        elif action == "custom":
+            p.settings["custom_tdp_battery"], p.settings["custom_tdp_plugged"] = 18, 28
+            p.run(p.apply_profile("custom"))
+            assert p.chip() == (28 if plugged else 18), p.chip()
+        else:
+            assert p.run(p.get_power())["pl2_set_w"] == (40 if plugged else 24)
+            p.run(p.set_pl2(True, 30 + plugged))
+            assert (p.settings["pl2_w_battery"], p.settings["pl2_w_plugged"]) == (30, 31 if plugged else 40)
+        p.run(p.power_source_changed(True))
+    p.run(p.game_stopped("7"))
+    p.ac["plugged"] = False
+    assert p.run(p.set_tdp(21))["ok"] and p.settings["custom_tdp_battery"] == 21
+
+
+@pytest.mark.parametrize("battery, charger", [(15, 26), (26, 15)])
+def test_the_guard_steps_back_up_to_the_games_power_source_until_steam_reports_a_change(plugin, tmp_path, battery,
+                                                                                         charger):
+    """The game on the charger at the charger's TDP setting, not governed there; the charger comes out and Steam has not
+    reported it. The guard trips and cools: it gives the watts back up to the charger's setting, the one on the
+    chip."""
+    p = plugin
+    t = tmp_path / "pkg_temp"
+    p.guard = thermal.Guard(str(t), "x86_pkg_temp")
+    p.settings["autotune_plugged"] = False
+    for plugged, w in ((False, battery), (True, charger)):
+        p.ac["plugged"] = plugged
+        assert p.run(p.set_tdp(w))["ok"]
+    p.run(p.game_started("7"))
+    p.ac["plugged"] = False
+    assert p.autotune.session is None and p.chip() == charger
+    seen = []
+    for c in [97] + [70] * 30:
+        _w(t, c * 1000)
+        p.run(p._guard_check())
+        seen.append(p.chip())
+    assert min(seen) < charger and max(seen) <= charger and seen[-1] == charger, seen
+
+
+@pytest.mark.parametrize("case", ["none", "over", "own", "paused", "ungoverned", "xemu"])
+def test_a_power_source_change_in_a_game_starts_the_new_slot_where_the_game_held(plugin, monkeypatch, case):
+    """A game on the charger, the charger comes out: battery's slot with no level for its limit and target starts
+    where the game held just before, under battery's limit, and that is not battery's own level; with a level it
+    starts there; after a change by hand, or not governed on the charger, mid-range; xemu stays out."""
+    p = plugin
+    p.ac["plugged"] = False
+    assert p.run(p.set_tdp(12 if case == "over" else 30))["ok"]
+    p.ac["plugged"] = True
+    p.settings["autotune_plugged"] = case != "ungoverned"
+    p.run(p.set_setting("autotune", True))
+    assert p.run(p.set_tdp(30))["ok"]
+    p.run(p.game_started("7"))
+    held = None
+    if case != "ungoverned":
+        _Game(p.autotune, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(30)
+        held = p.autotune.held_w()
+        p.profiles.set("7", False, {"learned": {"ceiling": 30, "target": p.autotune.session.user_target, "start": 10}
+                                    if case == "own" else {}})
+    if case == "paused":
+        p.autotune.pause()
+    if case == "xemu":
+        monkeypatch.setattr(autotune, "own_pace_emulator", lambda proc=None: "xemu")
+    p.ac["plugged"] = False
+    assert p.run(p.power_source_changed(False))["changed"]
+    s = p.autotune.session
+    mid = -(-(s.floor_tdp + s.ceiling_tdp) // 2)
+    want = {"none": held, "over": 12, "own": 10, "paused": mid, "ungoverned": mid, "xemu": 30}[case]
+    assert p.chip() == want and (case in ("paused", "ungoverned") or held not in (None, mid)), (p.chip(), held, mid)
+    assert s.learned.start == (10 if case == "own" else None)
+    assert s.paused == (case == "xemu")
+
+
+@pytest.mark.parametrize("action", ["max", "reset"])
+def test_a_new_maximum_and_use_default_in_a_game_put_their_limit_on_the_chip_not_where_the_game_held(plugin, action):
+    """Governed on battery: a new Autotune maximum and "Use default" restart the game at the new limit, as picked,
+    not where it held."""
+    p = plugin
+    p.ac["plugged"] = False
+    p.run(p.set_setting("autotune", True))
+    assert p.run(p.set_tdp(30))["ok"]
+    p.run(p.game_started("7"))
+    _Game(p.autotune, lambda tdp, *_: min(60.0, 3.0 * tdp)).run(30)
+    held = p.autotune.held_w()
+    assert p.run(p.set_autotune_max(26) if action == "max" else p.reset_power_slot("7"))["ok"]
+    s = p.autotune.session
+    assert p.chip() == s.ceiling_tdp != held and s.learned.start is None, (p.chip(), s.ceiling_tdp, held)
 
 
 def test_a_paused_game_plugged_in_before_steam_reports_it_keeps_the_paused_line(plugin):

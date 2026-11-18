@@ -147,8 +147,9 @@ left 8 W settings on a Claw that its user had not made, and a frontend's 8 W men
 `test_what_a_frontends_menus_hold_is_never_the_limit_of_its_games`.)
 - **Game start, a pick in a game, Use default, unplugging, resume:** `revert_all(keep_thermald=True)` (back to boot
   values, thermald stays stopped because a TDP follows at once), then the pick, then a fresh Autotune session under that
-  limit: at the level the game held last time under it, else mid-range. After a pick in the game the session starts at
-  the pick itself, and what was learned at the old limit is dropped.
+  limit: at the level the game held last time under it, else (unplugging, plugging in) where it held just before, else
+  mid-range. After a pick in the game the session starts at the pick itself, and what was learned at the old limit is
+  dropped.
 - **Game exit:** what Autotune learned is saved, everything is reverted, then the pick for the power source the Claw
   is on now goes back on the chip. With no pick on that power source the chip keeps the firmware's limits and thermald
   starts again. Unplugging with no game switches to the other power source's pick the same way.
@@ -194,11 +195,12 @@ What it knows:
   to the pace at which the full limit last gave no more at this limit, more frames are no news, for 30 s after
   the pace was last there (then it may be another place's). A band
   taken while the package drew 2 W or more under the limit (also by a step watched at such a draw, and by a step down
-  from such a limit while the package draws under the new one) is dropped when the package draws all of that limit,
+  from such a limit while the package draws under the new one, and by a look in another place while the package drew
+  less than all of that limit at the full one) is dropped when the package draws all of that limit,
   also when it was set aside and came back, or the governor went back to it (a video's band, and a place with the
   video's frame rate); a clear fall there gets the full limit at once (in a game that dips by itself, once it has
-  lasted a second). The limit is not booked as failed, and is tried once more only where the full limit gives the pace
-  it gave before (a dip of the game's own).
+  lasted a second, as any other fall). In a game that does not dip by itself, the limit is not booked as failed, and is
+  tried once more only where the full limit gives the pace it gave before (a dip of the game's own).
   **The ratio** is what this limit gave over what the full limit gave when both were last measured. After that
   the reference is the pace over the ratio: it moves with the game's own frame rate.
 - **The goal** is your target less 5 %. When the band's lower edge is under that (the full limit gave less than your
@@ -238,10 +240,11 @@ The rules:
    it gives another frame rate this is another place, and its band is this look's alone (what a look found in a
    slower place says nothing of a loss in the place after it). Else the limit failed and the full limit stays; steps
    down follow. One exception: a level that had held for 20 s (or a game that dips by itself) is tried once more,
-   watched, before it is given up. And no way back while the place still gets heavier: when the frame rate falls
-   during the look, or the limit loses again within 5 s of a look that sent it back and the full limit gives less
-   than at that look, the full limit stays (walking into a heavier place, the limit went back and forth 8 times in
-   7 s).
+   watched, before it is given up; so is a level at every such loss while the package draws less than all of it at
+   the full limit (a game that dips at every limit, every 20 or 30 s). And no way back while the place still gets
+   heavier: when the frame rate falls during the look, or the limit loses again within 5 s of a look that sent it
+   back and the full limit gives less than at that look, the full limit stays (walking into a heavier place, the
+   limit went back and forth 8 times in 7 s).
 2. **A step down** starts 5 s after the last write, from a pace that is in the band, that the last ten frames agree
    with and that stood still for 3 s. It goes to the level that held for 20 s in this scene; else halfway to the
    highest level under it that failed; else 2 W down, or straight to just over what the package draws. It is watched
@@ -299,8 +302,9 @@ most of a minute after a change the package can run up to PL2, and a step down w
 frames it didn't cost yet). The CPU and GPU levers stay as your profile set them.
 
 Start: where the game held last time under the same limit and for the same target (`Learned.start`: the level under
-which 80 % of the holding time lay; the session counts the seconds per watt, `State.held_s`), else mid-range between
-floor and limit. A TDP set while the game runs (slider, profile, Use default) is applied as set and
+which 80 % of the holding time lay; the session counts the seconds per watt, `State.held_s`), else, after a change of
+power source in the game, the level Autotune held just before (under the new limit; not saved as this power source's
+level), else mid-range between floor and limit. A TDP set while the game runs (slider, profile, Use default) is applied as set and
 Autotune works down from it. A manual change (Advanced) or switching it off in a game pauses it: your limit is applied
 again and the change made by hand stays. xemu (`OWN_PACE`, looked for every 3 s for the whole game) and a game with
 no frame rate for 30 s get your limit and are left alone.

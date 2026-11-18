@@ -1526,6 +1526,38 @@ def test_a_games_own_short_dips_at_a_free_band_get_one_look_and_are_learned(dip_
     assert len(g.st.dips) >= 2 and over <= 60.0, (over, g.st.dips, g.notes)
 
 
+@pytest.mark.parametrize("free_w", [6.0, 6.5])
+@pytest.mark.parametrize("every", [20.0, 30.0])
+@pytest.mark.parametrize("dip_s", [0.6, 1.0, 1.5, 2.0])
+def test_a_games_own_dips_every_20_or_30_s_at_a_free_band_keep_the_floor(dip_s, every, free_w):
+    """As above, with a dip every 20 or 30 s, of 0.6 to 2 s, and the package at 6 or 6.5 W out of the dips. A dip came
+    before the level had held for HOME_S, or within RETRY_S of its last try: the level was given up, the full limit
+    stayed, and the next dip caught its steps down (240 to 826 s over 8 W in 840 s). At the full limit the package
+    draws less than all of the level: the level once more. A dip that the full limit sees at 40 fps leaves the band
+    taken there without the free mark (the package drew all of the limit): no second look in the same dip."""
+    dip = lambda t: t >= 60.0 and (t % every) < dip_s
+    g = Game(gov.Cfg(floor=8, ceiling=30, target=60.0, start_w=None), fps=lambda w, t: 40.0 if dip(t) else 60.0)
+    g.draw = lambda w, t: float(w) if dip(t) else min(float(w), free_w)
+    g.run(900)
+    writes = sorted(g.writes) + [(g.t, None)]
+    over = sum(b - max(a, 60.0) for (a, w), (b, _) in zip(writes, writes[1:]) if w > 8 and b > 60.0)
+    assert over <= 90.0, (over, g.notes[-12:])
+
+
+def test_a_dip_that_the_full_limit_sees_gets_one_look():
+    """Held at the 8 W floor with the band free (60 fps, the package at 6 W). A dip of the game's own for 2 s to 40 fps
+    at every limit, with the package at the limit; the look that sees the loss reads 6.5 W (the mean of the last
+    half second, mostly before the dip). The full limit gives 40 fps: back to 8 W, the dip still on. The band taken
+    there kept the free mark, the package drew all of 8 W, and the dip got a second look in the same 2 s."""
+    dip = lambda t: 60.0 <= t < 62.0
+    g = Game(gov.Cfg(floor=8, ceiling=30, target=60.0, start_w=None), fps=lambda w, t: 40.0 if dip(t) else 60.0)
+    g.draw = lambda w, t: (6.5 if t < 60.5 else float(w)) if dip(t) else min(float(w), 6.0)
+    g.run(59)
+    assert (g.limit, g.st.free_w) == (8, 8)
+    g.run(7)
+    assert g.since(59.0) == [30, 8], (g.since(59.0), g.notes[-4:])
+
+
 def test_the_guards_cap_at_a_free_band_starts_no_look():
     """Held at the 8 W floor with the band free (a 30 fps video, the package at 7 W). The guard caps at 7 W, and the
     package draws all of it: the band is dropped, and 30 fps is a clear fall against your target. The cap is the full
@@ -1540,15 +1572,27 @@ def test_the_guards_cap_at_a_free_band_starts_no_look():
     assert said == ["the temperature guard allows 7 W"] and g.st.quiet_until < 80.0, (said, g.st.quiet_until)
 
 
-def test_a_looks_band_from_another_place_is_not_free():
-    """Held at the 8 W floor with the band free (a 30 fps video, the package at 7 W). At 60 s the game gives 40 fps:
-    one look, and its verdict takes the band of this place at 8 W. From 100 s on the package draws the limit (12 W
-    at most): that band is the look's, not the video's, and no second look starts."""
-    g = Game(gov.Cfg(floor=8, ceiling=30, target=60.0, start_w=None), fps=lambda w, t: 30.0 if t < 60.0 else 40.0)
-    g.draw = lambda w, t: min(float(w), 7.0) if t < 100.0 else min(float(w), 12.0)
-    g.run(160)
-    after = [(t, w) for t, w in sorted(g.writes) if t >= 60.0]
-    assert [w for _, w in after] == [30, 8], after
+@pytest.mark.parametrize("case, video_w", [("a light place", 7.0), ("the video slows", 6.5), ("the video slows", 7.0),
+                                           ("the video slows", 7.4)])
+def test_a_looks_band_taken_under_a_free_limit_says_nothing_of_a_place_that_draws_the_limit(case, video_w):
+    """Held at the 8 W floor with the band free (a 30 fps video, the package under the limit). Then a look whose verdict
+    takes the band of another place at 8 W, with the package still under the limit: a light place at 40 fps, or the
+    video at 25 fps. Then the game, which the limit holds back with the package at the limit: a fall, at most 30 s
+    under 57 fps (the look's band without the free mark held it until the 10-minute look: 561 s under)."""
+    start = 100.0 if case == "a light place" else 60.0
+
+    def fps(w, t):
+        if t >= start:
+            return min(60.0, (40.0 if case == "a light place" else 25.0) * w / 8.0)
+        return 30.0 if t < (60.0 if case == "a light place" else 40.0) else 40.0 if case == "a light place" else 25.0
+    g = Game(gov.Cfg(floor=8, ceiling=30, target=60.0, start_w=None), fps=fps)
+    g.draw = lambda w, t: min(float(w), video_w) if t < start else float(w)
+    g.run(start + 600)
+    writes, under, t = sorted(g.writes), 0.0, start
+    while t < g.t:
+        under += 0.05 if fps([w for at, w in writes if at <= t][-1], t) < 57.0 else 0.0
+        t += 0.05
+    assert under < 30.0, (round(under, 1), writes)
 
 
 def test_a_videos_band_says_nothing_of_a_place_that_has_its_frame_rate_and_draws_the_limit():
