@@ -50,6 +50,7 @@ LAG_S = 0.15            # the chip's sustained power follows a new limit with th
 STOP_TAU_S = 56.0       # the average the charger's hidden limit acts on (the firmware's PL1 window)
 PRESENT_MS = 0.2        # spread of a frame held by the game's frame limit (recorded: 33.33 ms median, 33.9 ms p99)
 TOLERANCE = 0.05        # a limit "costs frames" when it gives this much less than the full limit would ...
+OUT_TOLERANCE = 0.01    # ... this much with the goal out of reach (D11: no watts for frames under the goal) ...
 SLACK_FPS = 0.5         # ... and half a frame a second more, so a level right on that line counts as holding
 TOP_HZ = 120            # no target set: the screen's highest refresh rate with Auto FPS, as Autotune takes it
 FLOOR_W, CEILING_W = 8, 30
@@ -212,7 +213,8 @@ class Game:
 
     def line(self, best: float) -> float:
         """The frame rate under which the limit costs frames."""
-        return best - best * TOLERANCE - SLACK_FPS
+        out = best < (self.goal or TOP_HZ) * 0.99
+        return best - best * (OUT_TOLERANCE if out else TOLERANCE) - SLACK_FPS
 
     def need(self, scene: Scene, work: float) -> int:
         """The lowest whole-watt limit that gives the best rate within TOLERANCE."""
