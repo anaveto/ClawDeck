@@ -184,8 +184,8 @@ is too low look the same in the frames.
 
 What it knows:
 - **The reference** is what the full limit gives: the pace there, or the pace while the package is 2 W or more under
-  the limit (the median of the last five looks, so one dip does not move it). A pace at your target at a lowered limit
-  says only that the full limit gives your target at least.
+  the limit (the median of the last five looks, so one dip does not move it). A pace within 5 % of your target at a
+  lowered limit says only that the full limit gives that pace at least (your target, while nothing is known).
 - **The band** is the pace at the held limit when the limit was last known to cost no more than the margin: by a look
   at the full limit, by the step that came here and held, or all the time while the limit can't hold the game back.
   Lowest and highest, at most 15 % apart. A band belongs to one reference: a pace further away, or a look at which
@@ -205,12 +205,13 @@ What it knows:
   **The ratio** is what this limit gave over what the full limit gave when both were last measured. After that
   the reference is the pace over the ratio: it moves with the game's own frame rate.
 - **The goal** is your target less 5 %. When the band's lower edge is under that (the full limit gave less than your
-  target at the band's look; Auto FPS on), it is what the full limit gives less 1 %: no watts are saved with frames
-  under a target out of reach, and a lower limit holds only where it gives the full limit's frames (the game's own
-  frame limit, a scene the limit does not hold back). For a step down it is what the full limit gives now, and while
-  a limit is held what it gave when the band was taken (the band's lower edge over the ratio). A pace that falls from
-  the band and stays over that goal is no loss. There is always a target: none set is the screen's highest refresh
-  rate with Auto FPS, so the most frames the limit gives, less 1 %.
+  target at the band's look), it is what the full limit gives less 0.5 % (at a 60 fps frame limit, a step that cost
+  no frames measured up to 0.4 % under that estimate: a smaller margin fails such steps and costs a watt or more):
+  no watts are saved with frames under a target out of reach, and a lower limit holds only where it gives the full
+  limit's frames (the game's own frame limit, a scene the limit does not hold back). For a step down it is what the
+  full limit gives now, and while a limit is held what it gave when the band was taken (the band's lower edge over
+  the ratio). A pace that falls from the band and stays over that goal is no loss. There is always a target: none
+  set is the screen's highest refresh rate, so the most frames the limit gives, less 0.5 %.
 - **The game's wobble** widens what counts as a loss: 2.5 times what its frame rate does by itself, at most fourfold.
   Frame rates are frames over their time, without frames over 2.5 times the median.
 
@@ -244,8 +245,8 @@ The rules:
    slower place says nothing of a loss in the place after it). Else the limit failed and the full limit stays; steps
    down follow. One exception: a level that had held for 20 s (or a game that dips by itself) is tried once more,
    watched, before it is given up; so is a level at every loss that the full limit had too (its frame rate climbed
-   there) while the package then draws less than all of the level (a game that dips at every limit, every 20 or
-   30 s); a loss that the full limit answers at once is the limit's. And no way back while the place still gets
+   there from frames as slow as the level's) while the package then draws less than all of the level (a game that
+   dips at every limit, every 20 or 30 s); a loss that the full limit answers at once, or in part, is the limit's. And no way back while the place still gets
    heavier: when the frame rate falls during the look, or the limit loses again within 5 s of a look that sent it
    back and the full limit gives less than at that look, the full limit stays (walking into a heavier place, the
    limit went back and forth 8 times in 7 s).
