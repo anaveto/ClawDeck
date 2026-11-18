@@ -23,8 +23,7 @@ tools/autotune_sim.py. It changes `state` in place and returns what to do.
 Words:
   pace       the frame time the game holds: the median of the last PACE_FRAMES frames;
   reference  what the full limit gives: measured there, or the pace with the package 2 W or more under the limit;
-  goal       what has to be delivered: your target less TOL (or the reference less SUSTAINED when that is lower
-             and Auto FPS is on);
+  goal       what has to be delivered: your target less TOL (or the reference less SAME when that is lower);
   band       the pace at the held limit when the limit was last known to cost no more than that: by the full limit
              after a loss, by the step that came here and held, or all the time while the limit can't hold the game
              back (the full limit, the package 2 W under the limit, the pace at your target). Lowest and highest;
@@ -51,6 +50,7 @@ DIP_MAX_S = 2.0
 PACE_FRAMES = 60
 TOL = 0.05              # target mode: this far under the target is still the target
 REACHED = 0.99          # the full limit gives this much of the target: the target is in reach
+SAME = 0.003            # out of reach, a lower limit holds where it gives the full limit's frames within this
 SLOW = 1.10             # a frame this much longer than the pace is a slow one ...
 EDGE = 0.03             # ... and this much more of them than before a step is the edge of the limit (15 W in
                         # Midnight Club: Los Angeles: the median on pace, 6 % slow frames)
@@ -94,7 +94,6 @@ class Cfg:
     floor: int
     ceiling: int                    # your limit
     target: float                   # fps
-    auto_fps: bool = True           # a target out of reach: hold what the full limit gives instead
     start_w: int | None = None      # where this game held last time; None: mid-range
 
 
@@ -320,27 +319,22 @@ def goal(st: State, cfg: Cfg) -> float:
 
 def _goal_at(ref: float | None, cfg: Cfg) -> float:
     """... were `ref` what the full limit gives."""
-    if cfg.auto_fps and ref is not None and ref < cfg.target * REACHED:
-        return ref * (1 - SUSTAINED)
+    if ref is not None and ref < cfg.target * REACHED:
+        return ref * (1 - SAME)
     return cfg.target * (1 - TOL)
 
 
 def _need(st: State, cfg: Cfg) -> float:
-    """The pace the held limit has to give: your target less TOL. When the band is under that (a target out of reach
-    with Auto FPS on): the goal of when the band was taken, from what the full limit gave then (the band's lower edge
-    over the ratio). A pace that falls from the band and stays over that goal is no loss, whatever
-    its cause: of 24 falls of under 5 % that got the full limit on the Claw (2026-11-16), 15 were the game's own, two
-    changes of the limit each; the 9 others were 2 to 7 % under what the full limit gave."""
-    if not cfg.auto_fps or st.lo is None or st.lo >= cfg.target * (1 - TOL):
+    """The pace the held limit has to give: your target less TOL. When the band is under that (a target out of
+    reach): the band's lower edge, which a step held against what the full limit gives less SAME."""
+    if st.lo is None or (st.lo >= cfg.target * (1 - TOL) and not out_of_reach(st, cfg)):
         return cfg.target * (1 - TOL)
-    if not st.ratio:
-        return st.lo
-    return min(st.lo, _goal_at(st.lo / st.ratio, cfg) * (1 + SUSTAINED))     # (answered at that goal, not under it)
+    return st.lo
 
 
 def out_of_reach(st: State, cfg: Cfg) -> bool:
-    """Auto FPS: the full limit gives less than the target, so what it gives is held instead."""
-    return cfg.auto_fps and st.ref is not None and st.ref < cfg.target * REACHED
+    """The full limit gives less than the target, so what it gives is held instead."""
+    return st.ref is not None and st.ref < cfg.target * REACHED
 
 
 def _take(st: State, pace: float) -> None:
@@ -511,9 +505,10 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
                 st.ref, st.ratio = level, 1.0
                 st.full_at = t if st.limit >= top else st.full_at
                 st.free_w = st.limit if st.limit < top else None
-            elif st.ref is None or cfg.target > st.ref:
-                st.ref = cfg.target                  # the full limit gives at least what this limit gives (of your
-                                                     # target: a menu's frames over it are not the game's)
+            elif st.ref is None or level > st.ref:
+                # the full limit gives at least what this limit gives (of your target: a menu's frames over it are not
+                # the game's). With nothing known, your target: a pace within TOL of it is no sign it is out of reach
+                st.ref = cfg.target if st.ref is None else min(level, cfg.target)
     else:
         st.free_fps.clear()
     rising = obs.draw_w is not None and st.draw_was is not None and obs.draw_w > st.draw_was + RISE_W
@@ -672,8 +667,11 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
         return act
     third = len(st.watch) // 3
     if third >= N and t - st.wrote_at < 2 * BIND_S and _fps(st.watch[-third:]) > _fps(st.watch[:third]) * (1 + CLEAR):
-        st.climbed = True
-        return act                                   # the frame rate is still climbing: not judged yet
+        # the frame rate is still climbing: not judged yet. The full limit lost the frames too where two of its frames
+        # in a row were as slow as the level's (a moment that the full limit gives more frames in is the limit's)
+        st.climbed = st.climbed or (st.lost is not None and any(
+            _fps(st.watch[i:i + 2]) <= st.lost * (1 + CLEAR) for i in range(third)))
+        return act
     if (st.mode == "recover" and st.tried is None and third >= N
             and _fps(st.watch[-third:]) < _fps(st.watch[:third]) * (1 - clear)):
         # the frame rate falls at the full limit: the place gets heavier under the look, and what the limit before gave
@@ -1018,7 +1016,7 @@ def _hold(st, obs, cfg, act, top, cur, pace_ms, here, clear, small, dippy, free,
     if (t >= st.quiet_until and t - st.changed_at >= AFTER_LOSS_S
             and st.scene_since is None and st.loss_since is None and st.lo is not None and not over
             and abs(cur - here) <= clear * here and _steady(st, t, clear)
-            and (small <= SUSTAINED or not (cfg.auto_fps and ref < cfg.target * REACHED))):
+            and (small <= SUSTAINED or ref >= cfg.target * REACHED)):
         nxt = _next_down(st, obs, cfg, t, ref)
         if nxt is not None and (t - st.scene_at >= SCENE_S or (nxt == st.home and _same(st.home_ref, ref))):
             ms = [x for _, x in st.recent]
