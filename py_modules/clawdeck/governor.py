@@ -721,21 +721,27 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
             # (taken into the band before, a slower place widened it, and a loss of 10 % in the place after was in
             # it). The one before is kept, with its reference, when it is the faster one or had stood for SCENE_S (the
             # game under a menu): a pace that falls into the band of a short visit to a slower place is a loss until
-            # the full limit says otherwise (another place, where the last watts count for more, has that pace too)
+            # the full limit says otherwise (another place, where the last watts count for more, has that pace too).
+            # It is free only when the package drew less than all of this limit at the full one: a place that draws it
+            # all at the full limit is not one that the free mark is for (a dip of the game's own, looked at twice)
             keep = now < before or t - st.band_at >= SCENE_S
             st.was = (st.lo, st.hi, st.ratio, st.ref, t, st.band_at, st.free_w) if keep else None
             st.lo, st.hi, st.band_at = was, was, t
+            if obs.draw_w is None or obs.draw_w > st.limit - 0.5:
+                st.free_w = None
         else:
             _take(st, was)
         st.ratio, st.ref, st.seen_hi, st.seen_at = min(1.0, was / now), now, was, t
         if st.why == "slow":
             st.base_slow = max(st.lost_slow, share)  # as many at the full limit: the game's own in this place
         hold(AFTER_LOSS_S)
-    elif (st.mode == "recover" and ((st.held_for or 0.0) >= HOME_S or dippy)
-          and (st.why != "free" or before is not None and abs(now - before) <= 2 * small * before)
-          and t - st.retested.get(st.prev, -1e9) >= RETRY_S):
+    elif ((st.mode == "recover" and ((st.held_for or 0.0) >= HOME_S or dippy)
+           and t - st.retested.get(st.prev, -1e9) >= RETRY_S or obs.draw_w is not None and obs.draw_w <= st.prev - 0.5)
+          and (st.why != "free" or before is not None and abs(now - before) <= 2 * small * before)):
         # the frames are back at the full limit. But the level had held for a while, or this game dips by itself: a
-        # dip of the game's own looks the same. The level once more, watched; a loss that comes back is the limit's
+        # dip of the game's own looks the same. The level once more, watched; a loss that comes back is the limit's.
+        # Also at every such loss while the package draws less than all of the level at the full limit: the level may
+        # hold what the full limit gives now (a game that dips at every limit, every 20 to 30 s)
         level = st.prev
         st.retested[level] = t
         st.before, st.retest, st.loss_since, st.long = now, True, None, False
