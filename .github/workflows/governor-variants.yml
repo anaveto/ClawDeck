@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ['reach-off', 'small-noise-off', 'visit-woke-any-ref']
+        variant: ['a1-menu']
         first: [0, 60, 120, 180, 240]
     steps:
       - uses: actions/checkout@v7
