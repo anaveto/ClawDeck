@@ -1214,7 +1214,7 @@ def test_unplugging_during_and_after_a_game_follows_each_power_sources_pick(plug
     p.run(p.game_started("42"))
     _lower(p, 10)
     p.autotune.session.settled = True                              # it finished learning on battery
-    held = p.autotune.held_w()
+    held = p.autotune.carry_w()
     p.ac["plugged"] = True
     r = p.run(p.power_source_changed(True))
     assert r["changed"] and p.chip() == held != 22 and p.autotune.session.ceiling_tdp == 35 and p.autotune.plugged
@@ -2123,6 +2123,52 @@ def test_a_power_source_change_in_a_game_starts_the_new_slot_where_the_game_held
     assert p.chip() == want and (case in ("paused", "ungoverned") or held not in (None, mid)), (p.chip(), held, mid)
     assert s.learned.start == (10 if case == "own" else None)
     assert s.paused == (case == "xemu")
+
+
+@pytest.mark.parametrize("case", ["step", "look", "guard", "event then resume", "resume then event"])
+def test_a_power_source_change_carries_the_level_held_not_a_step_nor_the_guards_cap_also_over_a_sleep(plugin, case):
+    """The charger comes out in a game: battery's slot, with no level of its own, starts at the level before a step
+    down being watched, not the step's; at the full limit in the look after a loss; mid-range under the guard's cap;
+    where the game held when the charger came out in a sleep, in either order of the resume and Steam's report."""
+    p = plugin
+    p.ac["plugged"] = False
+    assert p.run(p.set_tdp(30))["ok"]
+    p.ac["plugged"] = True
+    p.settings["autotune_plugged"] = True
+    p.run(p.set_setting("autotune", True))
+    assert p.run(p.set_tdp(30))["ok"]
+    p.run(p.game_started("7"))
+    need = {"w": 25.0 if "resume" in case else 15.0}
+    g = _Game(p.autotune, lambda tdp, *_: min(60.0, 60.0 * tdp / need["w"]))
+    if case == "look":
+        g.run(60)
+        need["w"] = 26.0
+        for _ in range(20):
+            if p.autotune.session.gov.mode == "recover":
+                break
+            g.run(0.5)
+        want = p.autotune.session.learned.tdp
+        assert want >= 26 > p.autotune.session.gov.prev, (want, p.autotune.session.gov.prev)
+    elif case == "step":
+        for _ in range(4000):
+            g.run(0.5)
+            s = p.autotune.session
+            if s.gov.mode == "probe" and s.gov.limit < 15:
+                break
+        want = s.gov.prev
+        assert want >= 15 > p.chip(), (want, p.chip())
+    else:
+        g.run(60)
+        want = p.autotune.held_w()
+    if case == "guard":
+        assert p.autotune.thermal_step(want - 4)
+        s = p.autotune.session
+        want = -(-(s.floor_tdp + s.ceiling_tdp) // 2)
+    p.ac["plugged"] = False
+    for step in ("event", "resume") if case != "resume then event" else ("resume", "event"):
+        if step == "event" or "resume" in case:
+            p.run(p.power_source_changed(False) if step == "event" else p.resumed())
+    assert p.chip() == want and p.autotune.session.learned.start is None, (p.chip(), want)
 
 
 @pytest.mark.parametrize("action", ["max", "reset"])

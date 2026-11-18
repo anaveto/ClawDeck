@@ -1494,6 +1494,20 @@ def test_a_clear_fall_at_a_band_taken_with_the_package_under_the_limit_books_not
     assert (8 in after or 8 in g.st.fail) == (drawn == 8.0), (after, sorted(g.st.fail), g.notes)
 
 
+def test_a_free_bands_level_that_the_game_after_a_video_failed_is_not_tried_again_at_once():
+    """Target 30: a 30 fps video (the package at 6 W at every limit) until 100 s: the steps end at the 8 W floor, the
+    band free. The game then gives 2 fps a watt up to 60 at 30 W, the package at the limit: 8 W was too low, not
+    booked. 8 W was the level held in this scene (the pace counts at your target): the step down 5 s later went
+    to 8 W again and lost again (1.5 s under 28.5 fps)."""
+    video = lambda t: t < 100.0
+    g = Game(gov.Cfg(floor=8, ceiling=30, target=30.0, start_w=30),
+             fps=lambda w, t: 30.0 if video(t) else min(60.0, 2.0 * w))
+    g.draw = lambda w, t: min(float(w), 6.0) if video(t) else float(w)
+    g.run(160)
+    after = [w for t, w in sorted(g.writes) if t >= 100.0]
+    assert after[0] == 30 and 8 not in after, (after, [n for t, n in g.notes if 99.0 <= t <= 110.0])
+
+
 @pytest.mark.parametrize("at_floor, drawn", [(27.0, 6.1), (27.0, 7.0), (30.0, 6.1), (30.0, 7.0), (27.0, 8.0)])
 def test_a_game_at_the_videos_frame_rate_under_your_target_books_nothing_for_the_videos_limit(at_floor, drawn):
     """A 30 fps intro video: the steps end at the 8 W floor, with the package at 6.1 or 7 W (the band is free) or at
@@ -1526,15 +1540,13 @@ def test_a_games_own_short_dips_at_a_free_band_get_one_look_and_are_learned(dip_
     assert len(g.st.dips) >= 2 and over <= 60.0, (over, g.st.dips, g.notes)
 
 
-@pytest.mark.parametrize("free_w", [6.0, 6.5])
+@pytest.mark.parametrize("dip_s, free_w", [(0.6, 6.0), (0.6, 6.5), (1.0, 6.0), (1.0, 6.5), (1.5, 6.5), (2.0, 6.5)])
 @pytest.mark.parametrize("every", [20.0, 30.0])
-@pytest.mark.parametrize("dip_s", [0.6, 1.0, 1.5, 2.0])
 def test_a_games_own_dips_every_20_or_30_s_at_a_free_band_keep_the_floor(dip_s, every, free_w):
     """As above, with a dip every 20 or 30 s, of 0.6 to 2 s, and the package at 6 or 6.5 W out of the dips. A dip came
     before the level had held for HOME_S, or within RETRY_S of its last try: the level was given up, the full limit
-    stayed, and the next dip caught its steps down (240 to 826 s over 8 W in 840 s). At the full limit the package
-    draws less than all of the level: the level once more. A dip that the full limit sees at 40 fps leaves the band
-    taken there without the free mark (the package drew all of the limit): no second look in the same dip."""
+    stayed, and the next dip caught its steps down (240 to 826 s over 8 W in 840 s). The full limit lost the frames
+    too (they climbed at it) and the package draws less than all of the level: the level once more."""
     dip = lambda t: t >= 60.0 and (t % every) < dip_s
     g = Game(gov.Cfg(floor=8, ceiling=30, target=60.0, start_w=None), fps=lambda w, t: 40.0 if dip(t) else 60.0)
     g.draw = lambda w, t: float(w) if dip(t) else min(float(w), free_w)
@@ -1542,6 +1554,52 @@ def test_a_games_own_dips_every_20_or_30_s_at_a_free_band_keep_the_floor(dip_s, 
     writes = sorted(g.writes) + [(g.t, None)]
     over = sum(b - max(a, 60.0) for (a, w), (b, _) in zip(writes, writes[1:]) if w > 8 and b > 60.0)
     assert over <= 90.0, (over, g.notes[-12:])
+
+
+@pytest.mark.parametrize("every, burst_s, need, base", [(10.0, 1.0, 12.0, 7.0), (20.0, 1.0, 12.0, 7.0),
+                                                       (10.0, 0.5, 11.0, 7.4), (20.0, 1.5, 14.0, 6.0)])
+def test_a_heavier_moment_that_the_full_limit_answers_at_once_is_the_limits(every, burst_s, need, base):
+    """A game on its 60 fps frame limit at 6 to 7.4 W, and every 10 or 20 s a burst of 0.5 to 1.5 s that needs 11 to
+    14 W (45 fps under it). The full limit gives 60 fps from its first frames, and the burst is over before the
+    verdict, the package under the level. Taken for a dip of the game's own, the level stayed: 40 to 82 s under 57 fps."""
+    inb = lambda t: t >= 60.0 and (t % every) < burst_s
+    fps = lambda w, t: (60.0 if w >= need else 45.0) if inb(t) else 60.0
+    g = Game(gov.Cfg(floor=8, ceiling=30, target=60.0, start_w=None), fps=fps)
+    g.draw = lambda w, t: min(float(w), need) if inb(t) else min(float(w), base)
+    g.run(900)
+    writes = sorted(g.writes)
+    at = lambda t: [w for a, w in writes if a <= t][-1]
+    under = sum(0.05 for i in range(1200, 18000) if fps(at(i * 0.05), i * 0.05) < 57.0)
+    assert under <= 3.0 and len(g.st.dips) <= 1, (under, g.st.dips, g.notes[-6:])
+
+
+def test_slow_frames_that_the_full_limit_does_not_have_fail_the_level_and_book_no_dip():
+    """A 30 fps lock held at 29 W of 30 W. From 100 s the place is lighter (30 fps from 27 W, the package at 27.5 W at
+    most) with slow frames at every limit under 30 W (every 17th frame 15 % long). The look for slow frames finds none
+    at the full limit: the level failed, the full limit stays. Not tried once more for 2.5 s, which cannot show a 6 %
+    share, and not booked as the game's own dip (3 times in 100 s, the package under the level at the full limit)."""
+    need = lambda t: 29.0 if t < 100.0 else 27.0
+    g = Game(gov.Cfg(floor=8, ceiling=30, target=30.0, start_w=29), fps=lambda w, t: 30.0 * min(1.0, w / need(t)),
+             shape=lambda i, w, t: 1.15 if (t >= 100.0 and w < 30 and i % 17 == 0) else 1.0)
+    g.draw = lambda w, t: min(float(w), 29.0 if t < 100.0 else 27.5)
+    g.run(100)
+    assert g.limit == 29
+    g.run(100)
+    said = [n for t, n in g.notes if t >= 100.0]
+    assert not [n for n in said if "once more" in n] and len(g.st.dips) == 0, (said[:6], list(g.st.dips))
+
+
+def test_a_menu_that_opens_at_the_end_of_a_steps_watch_is_no_dip_of_the_games_own():
+    """No target: 19 fps from 13 W, the package at the limit. A menu (72 fps at every limit, 9 W) opens 0.2 s before
+    the end of the watch of the step 15 -> 13 W: more frames than before the step, a look, the menu's 72 fps at the
+    full limit with the package under 13 W. Not 13 W once more and booked as the game's own dip."""
+    m0 = 12.7
+    menu = lambda t: m0 <= t < m0 + 40.0
+    g = Game(gov.Cfg(floor=8, ceiling=25, target=120.0, start_w=None),
+             fps=lambda w, t: 72.0 if menu(t) else 19.0 * min(1.0, w / 13.0))
+    g.draw = lambda w, t: 9.0 if menu(t) else float(w)
+    g.run(m0 + 10.0)
+    assert len(g.st.dips) == 0, ([n for t, n in g.notes if t >= m0 - 0.5], list(g.st.dips))
 
 
 def test_a_dip_that_the_full_limit_sees_gets_one_look():
@@ -2509,13 +2567,16 @@ def test_a_level_that_fails_again_and_again_is_tried_again_after_ten_minutes_at_
     assert n == 4 and retry_at - at == pytest.approx(600), g.st.fail
 
 
-def test_after_many_failed_steps_in_a_row_the_next_step_waits_five_minutes_at_most():
-    """Steps wait 5 s after a failed one, twice that after each further one in a row: 10, 20, ... s, then 5 minutes."""
+@pytest.mark.parametrize("misses", [9, 1024])
+def test_after_many_failed_steps_in_a_row_the_next_step_waits_five_minutes_at_most(misses):
+    """Steps wait 5 s after a failed one, twice that after each further one in a row: 10, 20, ... s, then 5 minutes;
+    also after a thousand (5 s times 2 to the 1024th is past a float: the governor stopped, after 7 days)."""
     g, low = _at_14_w_with_a_level_that_failed()
-    g.st.fail[low][0], g.st.misses, g.st.miss_ref, g.st.quiet_until = g.t, 9, g.st.fail[low][2], g.t
+    g.st.fail[low][0], g.st.misses, g.st.miss_ref, g.st.quiet_until = g.t, misses, g.st.fail[low][2], g.t
     t0 = g.t
     g.run(30)
-    assert low in g.since(t0) and g.st.misses == 10 and 270 <= g.st.quiet_until - g.t <= 300, (g.since(t0), g.st.misses)
+    assert low in g.since(t0) and g.st.misses == misses + 1 and 270 <= g.st.quiet_until - g.t <= 300, (g.since(t0),
+                                                                                                     g.st.misses)
 
 
 @pytest.mark.parametrize("apart, waited", [(200, True), (400, False)])

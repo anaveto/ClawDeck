@@ -147,9 +147,9 @@ left 8 W settings on a Claw that its user had not made, and a frontend's 8 W men
 `test_what_a_frontends_menus_hold_is_never_the_limit_of_its_games`.)
 - **Game start, a pick in a game, Use default, unplugging, resume:** `revert_all(keep_thermald=True)` (back to boot
   values, thermald stays stopped because a TDP follows at once), then the pick, then a fresh Autotune session under that
-  limit: at the level the game held last time under it, else (unplugging, plugging in) where it held just before, else
-  mid-range. After a pick in the game the session starts at the pick itself, and what was learned at the old limit is
-  dropped.
+  limit: at the level the game held last time under it, else (unplugging, plugging in, also during a sleep) where it
+  held just before (in a step down the level before it; not under the temperature guard's cap), else mid-range. After
+  a pick in the game the session starts at the pick itself, and what was learned at the old limit is dropped.
 - **Game exit:** what Autotune learned is saved, everything is reverted, then the pick for the power source the Claw
   is on now goes back on the chip. With no pick on that power source the chip keeps the firmware's limits and thermald
   starts again. Unplugging with no game switches to the other power source's pick the same way.
@@ -200,7 +200,8 @@ What it knows:
   also when it was set aside and came back, or the governor went back to it (a video's band, and a place with the
   video's frame rate); a clear fall there gets the full limit at once (in a game that dips by itself, once it has
   lasted a second, as any other fall). In a game that does not dip by itself, the limit is not booked as failed, and is
-  tried once more only where the full limit gives the pace it gave before (a dip of the game's own).
+  tried once more only where the full limit gives the pace it gave before (a dip of the game's own); it is no longer
+  the level to go back to.
   **The ratio** is what this limit gave over what the full limit gave when both were last measured. After that
   the reference is the pace over the ratio: it moves with the game's own frame rate.
 - **The goal** is your target less 5 %. When the band's lower edge is under that (the full limit gave less than your
@@ -240,8 +241,9 @@ The rules:
    it gives another frame rate this is another place, and its band is this look's alone (what a look found in a
    slower place says nothing of a loss in the place after it). Else the limit failed and the full limit stays; steps
    down follow. One exception: a level that had held for 20 s (or a game that dips by itself) is tried once more,
-   watched, before it is given up; so is a level at every such loss while the package draws less than all of it at
-   the full limit (a game that dips at every limit, every 20 or 30 s). And no way back while the place still gets
+   watched, before it is given up; so is a level at every loss that the full limit had too (its frame rate climbed
+   there) while the package then draws less than all of the level (a game that dips at every limit, every 20 or
+   30 s); a loss that the full limit answers at once is the limit's. And no way back while the place still gets
    heavier: when the frame rate falls during the look, or the limit loses again within 5 s of a look that sent it
    back and the full limit gives less than at that look, the full limit stays (walking into a heavier place, the
    limit went back and forth 8 times in 7 s).

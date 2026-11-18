@@ -723,6 +723,15 @@ class Autotune:
             return min(s.learned.tdp, s.gov.prev)
         return s.learned.tdp
 
+    def carry_w(self) -> int | None:
+        """Where the game held, for a restart on another power source: during a step down the level before it, during
+        a look at the full limit after a loss that limit; nothing when paused or under the temperature guard's cap (the
+        restart resets the guard)."""
+        s = self.session
+        if s is None or s.paused or s.thermal_cap is not None:
+            return None
+        return s.gov.prev if s.gov is not None and s.gov.mode == "probe" else s.learned.tdp
+
     def _top(self, s: Session) -> int:
         """The most autotune may use: the set TDP, or less while the temperature guard holds it down."""
         return s.ceiling_tdp if s.thermal_cap is None else min(s.ceiling_tdp, s.thermal_cap)
