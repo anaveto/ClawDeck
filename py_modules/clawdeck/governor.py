@@ -211,6 +211,7 @@ def forget(st: State) -> None:
     frame-generation multiplier."""
     st.ref = None
     _unknown(st)
+    st.kept = (None,) * 5                            # (a watch in flight would put it back at its end)
     st.fail.clear()
     st.misses, st.home = 0, None
     st.scene_fps = st.scene_since = None
@@ -597,6 +598,8 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
             # limit gives at least as many, so the ratio is at most 1
             st.lo, st.hi, st.ratio = held, held, (min(1.0, ratio * held / st.before) if ratio and st.before else None)
             st.band_at = t
+            if st.free_w == st.limit and obs.draw_w is not None and obs.draw_w > st.limit - 0.5:
+                st.free_w = None                     # (one look of the watch under it: the package draws the limit now)
             nxt = _next_down(st, obs, cfg, t, scene)
             rate = got if dippy and got is not None else held        # (a game that dips: on its typical frame)
             if st.before and rate > st.before * (1 + max(ABOVE, small)) and not obs.thermal:
@@ -688,7 +691,7 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
         # the limit before gives what the full one gives, within the margin (and has no more slow frames): the scene
         # or the game's own, not the limit. Back to it; its band takes that pace in, and its ratio is from now. Under
         # what the full limit gives, it has to leave CLEAR over the goal, as a step down has to
-        if st.mode == "recover" and st.since - st.said[0] < AFTER_LOSS_S and now < st.said[1] * (1 - clear):
+        if st.mode == "recover" and st.wrote_at - st.said[0] < AFTER_LOSS_S and now < st.said[1] * (1 - clear):
             # ... unless this loss came within AFTER_LOSS_S of the last such answer and the full limit gives less than
             # it gave then: the place is still getting heavier (too slowly to show in one look), and each way back
             # loses again. (The same frame rate as then is a place that has stayed: a video that began between two
