@@ -447,8 +447,6 @@ class Plugin:
                     plugged = bool(self.battery.plugged())
                     w = self._pick(self._game_key(), plugged)["tdp"]
                 self.autotune.pause("autotune switched off", limit=w)
-                if w is not None and not self.autotune.running():
-                    self.power.set_tdp(w, plugged)
         if key in ("autotune", "autotune_plugged") and self.running_appid is None and self.settings.get("autotune_max"):
             async with self._power_lock:
                 self._apply_idle_pick(bool(self.battery.plugged()))
@@ -551,7 +549,9 @@ class Plugin:
         pk = self._pick(self._game_key() if self.running_appid else None, plugged)
         own = self.settings.get("autotune_max")
         st["autotune_max"] = self.power.clamp_tdp(int(own), plugged) if own else pk["tdp"]
-        st["autotune_governs"] = self._autotune_governs(pk["prof"], plugged)
+        st["autotune_governs"] = self._autotune_governs(pk["prof"], plugged) and (
+            self.running_appid is None or self.autotune.session is not None)
+        st["autotune_screen_target"] = self.autotune.target_of(0)[0]
         st["thermal"] = self.guard.status()
         slot = "plugged" if self.battery.plugged() else "battery"
         st["pl2_manual"] = bool(self.settings.get("pl2_manual"))
@@ -923,7 +923,7 @@ class Plugin:
                                         set_clock=self._guard_clock)
             # your limit for this power source (the pick, or Autotune's maximum): where stepping back up stops
             pk = self._pick(self._game_key(), plugged)
-            limit = self._limit_overrides(pk, plugged).get("tdp", pk["tdp"])
+            limit = pk["tdp"] if self.running_appid else self._limit_overrides(pk, plugged).get("tdp", pk["tdp"])
             return self.guard.check(self.power.read_tdp(), self._floor_w(), lambda w: self.power.set_tdp(w, plugged),
                                     limit_w=limit, set_clock=self._guard_clock)
 
@@ -1008,6 +1008,7 @@ class Plugin:
             self._save_learned(self._game_key(), bool(self.running_plugged))
             self.running_plugged, self.running_key = plugged, key
             self.running_title = ev["name"] if ev["event"] == "start" else None
+            self._autotune_late = getattr(self, "_autotune_late", False) and ev["event"] != "start"
             decky.logger.info("frontend: %s %s (%s): power and Autotune as %s", "started" if ev["event"] == "start"
                               else "ended", ev["name"], ev["system"], key)
             return self._restart_game_power(key, plugged)
@@ -1132,7 +1133,8 @@ class Plugin:
         t, auto_fps = self.autotune.target_of(0 if t <= 0 else max(autotune.MIN_TARGET, min(t, 240)), auto_fps)
         self.settings["autotune_target"], self.settings["autotune_auto_fps"] = t, auto_fps
         self._save_settings()
-        self.autotune.set_target(t, auto_fps)
+        if not (self.running_appid is not None and getattr(self, "_autotune_late", False)):
+            self.autotune.set_target(t, auto_fps)
         words = f"Autotune holds {t} fps with the fewest watts" + (" (Auto FPS: the closest it can reach)" if auto_fps else "")
         return {"ok": True, "target": t, "auto_fps": auto_fps, "summary": words, "error": None}
 
