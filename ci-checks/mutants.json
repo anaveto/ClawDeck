@@ -2420,5 +2420,12 @@
   "rule taken out: no wobble gate out of reach",
   "            and abs(cur - here) <= clear * here and _steady(st, t, clear)):\n",
   "            and abs(cur - here) <= clear * here and _steady(st, t, clear)\n            and (small <= SUSTAINED or ref >= cfg.target * REACHED)):\n"
+ ],
+ [
+  "r-a-second-try-starts-the-failed-step-count-over",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a second try starts the failed step count over",
+  "        st.before, st.retest, st.loss_since, st.long, st.misses = now, True, None, False, 0\n",
+  "        st.before, st.retest, st.loss_since, st.long = now, True, None, False\n"
  ]
 ]
