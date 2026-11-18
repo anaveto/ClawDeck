@@ -195,7 +195,8 @@ What it knows:
   to the pace at which the full limit last gave no more at this limit, more frames are no news, for 30 s after
   the pace was last there (then it may be another place's). A band
   taken while the package drew 2 W or more under the limit (also by a step watched at such a draw, and by a step down
-  from such a limit while the package draws under the new one) is dropped when the package draws all of that limit,
+  from such a limit while the package draws under the new one, and by a look in another place while the package drew
+  less than all of that limit at the full one) is dropped when the package draws all of that limit,
   also when it was set aside and came back, or the governor went back to it (a video's band, and a place with the
   video's frame rate); a clear fall there gets the full limit at once (in a game that dips by itself, once it has
   lasted a second). The limit is not booked as failed, and is tried once more only where the full limit gives the pace
@@ -239,10 +240,11 @@ The rules:
    it gives another frame rate this is another place, and its band is this look's alone (what a look found in a
    slower place says nothing of a loss in the place after it). Else the limit failed and the full limit stays; steps
    down follow. One exception: a level that had held for 20 s (or a game that dips by itself) is tried once more,
-   watched, before it is given up. And no way back while the place still gets heavier: when the frame rate falls
-   during the look, or the limit loses again within 5 s of a look that sent it back and the full limit gives less
-   than at that look, the full limit stays (walking into a heavier place, the limit went back and forth 8 times in
-   7 s).
+   watched, before it is given up; so is a level at every such loss while the package draws less than all of it at
+   the full limit (a game that dips at every limit, every 20 or 30 s). And no way back while the place still gets
+   heavier: when the frame rate falls during the look, or the limit loses again within 5 s of a look that sent it
+   back and the full limit gives less than at that look, the full limit stays (walking into a heavier place, the
+   limit went back and forth 8 times in 7 s).
 2. **A step down** starts 5 s after the last write, from a pace that is in the band, that the last ten frames agree
    with and that stood still for 3 s. It goes to the level that held for 20 s in this scene; else halfway to the
    highest level under it that failed; else 2 W down, or straight to just over what the package draws. It is watched
