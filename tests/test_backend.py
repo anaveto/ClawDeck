@@ -1228,6 +1228,19 @@ def test_unplugging_during_and_after_a_game_follows_each_power_sources_pick(plug
     assert r["reapplied"] and p.chip() == 20
 
 
+def test_a_game_that_stops_before_steam_reports_the_charger_saves_to_its_power_source(plugin):
+    """A game governed on battery; the charger goes in and the game stops before Steam reports it. What Autotune
+    learned goes to battery's slot, where it was learned, not to the charger's."""
+    p = plugin
+    p.ac["plugged"] = False
+    p.run(p.game_started("42"))
+    _lower(p, 10)
+    p.autotune.session.settled = True
+    p.ac["plugged"] = True
+    p.run(p.game_stopped("42"))
+    assert p.profiles.own("42", False).get("learned") and not p.profiles.own("42", True).get("learned")
+
+
 def test_autotune_saves_only_a_finished_result(fake_hw, monkeypatch):
     at, s = _tuner(fake_hw, monkeypatch)
     _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(5)
