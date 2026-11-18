@@ -1135,6 +1135,7 @@ def test_the_guard_in_the_menus_steps_back_up_to_autotunes_maximum_not_the_tdp_s
             seen.append(p.chip())
         assert min(seen) < top and max(seen) <= top and seen[-1] == top, (on, setting, own, seen)
 
+
 def test_a_game_with_autotune_off_for_it_keeps_the_tdp_setting_and_a_movable_slider(plugin):
     p = plugin
     p.run(p.set_tdp(26))
@@ -1792,6 +1793,35 @@ def test_autotune_on_the_charger_switched_in_a_game_on_battery_leaves_the_game_g
     p.run(p.set_setting("autotune_plugged", value))
     _Game(p.autotune, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(60)
     assert not s.paused and p.chip() < 26 and p.run(p.get_power())["autotune_governs"], (s.paused, p.chip())
+
+
+def test_the_panel_gets_the_screens_highest_refresh_rate_for_the_target_list(plugin):
+    """Also after another target is picked: the target when none is set stays in the panel's list."""
+    p = plugin
+    p.run(p.set_autotune_target(40, True))
+    assert p.run(p.get_power())["autotune_screen_target"] == max(p.hw.model.get("panel_hz") or [60]) != 40
+
+
+@pytest.mark.parametrize("during", ["menus", "game"])
+def test_esde_menus_after_its_game_are_not_governed_when_autotune_came_on_in_esde(plugin, during):
+    """ES-DE launched with Autotune off (its menus keep the TDP setting, 26 W); Autotune switched on in ES-DE's menus
+    or in one of its games, Autotune's maximum 15 W. After that game ends ES-DE's menus are as before: not governed,
+    the TDP setting on the chip. They were governed under 15 W."""
+    p = plugin
+    p.settings["autotune"] = False
+    p.autotune.enabled = False
+    assert p.run(p.set_tdp(26))["ok"]
+    p.run(p.game_started("100"))
+    if during == "menus":
+        p.run(p.set_setting("autotune", True))
+    _frontend_event(p, "start", "ps2", "/roms/ps2/a.iso", "Game A")
+    if during == "game":
+        p.run(p.set_setting("autotune", True))
+    p.run(p.set_autotune_max(15))
+    _frontend_event(p, "end", "ps2", "/roms/ps2/a.iso", "Game A")
+    assert p.running_key == "100"
+    assert p.autotune.session is None and p.chip() == 26, (p.autotune.session is not None, p.chip())
+
 
 def test_xemu_from_an_appimage_is_found_though_its_process_is_called_apprun(tmp_path):
     def running(comm, exe=None):

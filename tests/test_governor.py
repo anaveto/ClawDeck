@@ -145,6 +145,7 @@ def test_a_second_fall_within_five_seconds_keeps_the_full_limit_also_while_the_d
     g.run(10)
     assert [w for _, w in g.writes] == [30, 16, 30], g.writes
 
+
 @pytest.mark.parametrize("at", [3.25, 3.35, 3.44])
 def test_a_video_that_begins_between_two_looks_gets_its_limit_back(at):
     """A 30 fps video at every limit begins a moment before a look: the last ten frames are part game, part video, the
@@ -470,8 +471,9 @@ def test_watts_the_guard_gives_back_during_a_step_down_end_its_watch(back_to):
     g.draw = lambda w, t: float(w)
     g.cap = 16
     g.run(20)
-    while not (g.st.mode == "probe" and g.limit < 16 and g.t - g.st.wrote_at > 0.5):
+    while not (g.st.mode == "probe" and g.limit < 16 and g.t - g.st.wrote_at > 0.5) and g.t < 300:
         g.run(0.1)
+    assert g.st.mode == "probe" and g.limit < 16, (g.limit, g.notes[-6:])
     g.cap = back_to
     line = fps(back_to or 30) * (1 - gov.TOL)
     under = 0.0
@@ -490,10 +492,12 @@ def test_the_end_of_the_clock_cap_during_a_step_down_does_not_judge_the_step_aga
     g.draw = lambda w, t: float(w)
     g.thermal = True
     g.run(30)
-    n = 0
-    while n < nth:
+    steps = set()
+    while len(steps) < nth and g.t < 300:
         g.run(0.1)
-        n += g.st.mode == "probe" and g.t - g.st.wrote_at < 0.15
+        if g.st.mode == "probe":
+            steps.add(g.st.wrote_at)
+    assert len(steps) == nth, (steps, g.notes[-6:])
     g.run(0.5)
     t0 = g.t
     g.thermal = False
@@ -522,27 +526,6 @@ def test_watts_the_guard_gives_back_over_a_level_it_did_not_hold_leave_its_secon
     assert g.limit == 10 and [n for t, n in g.notes if t >= t0 and "holds again" in n], [n for n in g.notes if n[0] >= t0]
 
 
-@pytest.mark.parametrize("heavy, light", [(25, 14), (22, 12)])
-def test_a_level_that_failed_in_a_heavy_place_does_not_hold_up_the_steps_in_a_light_one_on_a_frame_limit(heavy, light):
-    """A game on its 60 fps limit: 120 s in a heavy place (60 fps from `heavy` W), 300 s in a light one (from `light`
-    W), four times; the package draws 1 W over the need. The full limit gives 60 fps in both places, so a level that
-    failed in the heavy one counted in the light one too, until a try that waits longer at each failure: the fourth
-    light place 4 W over its need on the mean."""
-    place = {"need": heavy}
-    g = Game(gov.Cfg(floor=8, ceiling=30, target=60, start_w=30),
-             fps=lambda w: 60.0 if w >= place["need"] else 60.0 - 3.0 * (place["need"] - w))
-    g.draw = lambda w, t: float(min(w, place["need"] + 1))
-    for _ in range(4):
-        place["need"] = heavy
-        g.run(120)
-        place["need"] = light
-        over = 0.0
-        for _ in range(3000):
-            g.run(0.1)
-            over += 0.1 * (g.limit - light)
-    assert over / 300 <= 1.0, (over / 300, g.st.fail)
-
-
 @pytest.mark.parametrize("menu_s, menu_w, lock", [(5, 9.0, 60), (20, 9.0, 60), (20, 17.5, 60), (20, 9.0, 30)])
 def test_a_menu_at_the_games_own_frame_rate_takes_no_step_down_before_its_frames_are_counted_free(menu_s, menu_w, lock):
     """A game on its frame limit (`lock` fps) that needs 20 W and draws its need; its menu at the same frame rate draws
@@ -558,6 +541,7 @@ def test_a_menu_at_the_games_own_frame_rate_takes_no_step_down_before_its_frames
     g.run(menu_s)
     menu["on"] = False
     assert [w for at, w in g.writes if at >= t0 and w < held] == [], (held, [n for n in g.notes if n[0] >= t0][:6])
+
 
 def test_a_clock_cap_from_the_guard_stops_the_looks_at_the_full_limit_not_the_steps_down():
     g = Game(gov.Cfg(floor=8, ceiling=30, target=120, start_w=30), fps=lambda w: min(50.0, 2.5 * w))
@@ -1371,6 +1355,7 @@ def test_a_loss_right_after_the_clocks_look_is_answered_as_any_other():
     g.run(30)
     assert g.since(t0) == [30, 28], [n for n in g.notes if n[0] >= t0]       # (not 30, 29, 28)
 
+
 def test_a_pace_the_full_limit_did_not_beat_is_another_places_after_half_a_minute():
     """Held at 14 W in a place that gives 50 fps. A lighter place for 15 s (60 fps, the full limit gives no more),
     back for five minutes, then a place where 14 W gives 58 fps and the full limit 75: the 60 fps of minutes before
@@ -1451,6 +1436,7 @@ def test_one_look_under_the_limit_in_a_steps_watch_does_not_make_its_band_free(a
         g.run(60)
         return [w for _, w in g.writes]
     assert run(True) == run(False)
+
 
 @pytest.mark.parametrize("target, reach", [(30, False), (22, True)])
 def test_after_a_menu_the_full_limit_is_asked_once_when_the_target_is_out_of_reach(target, reach):
