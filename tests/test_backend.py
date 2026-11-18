@@ -1,5 +1,6 @@
 """Backend tests against a fake sysfs tree (no hardware needed): detection, clamping, revert, profiles,
 autotune control logic. Run: python3 -m pytest -q tests"""
+import csv
 import json
 import os
 import sys
@@ -9,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "py_modules"))
 
-from clawdeck import autotune, frontend, hw, power, profiles, sysfs, thermal  # noqa: E402
+from clawdeck import autotune, hw, power, profiles, sysfs, thermal  # noqa: E402
 
 
 def _w(path, value):
@@ -102,9 +103,6 @@ def test_classify():
     assert autotune.classify(s) == "balanced"
 
 
-
-
-
 def test_six_profiles_step_up_in_power():
     for table in hw.PROFILES.values():
         assert list(table) == ["saver", "battery", "balanced", "performance", "plugged", "max"]
@@ -145,7 +143,6 @@ def test_face_buttons_override(tmp_path, monkeypatch):
     assert r["ok"] and len(r["removed"]) == 2 and not buttons.status("MS-1T91")["installed"]
 
 
-
 def test_sampler_averages_every_new_mangohud_row(fake_hw, tmp_path):
     log = tmp_path / "game_2026.csv"
     log.write_text("os,cpu,gpu\nLinux,x,y\nfps,frametime,cpu_load\n60,16.6,30\n")
@@ -156,7 +153,6 @@ def test_sampler_averages_every_new_mangohud_row(fake_hw, tmp_path):
     ft, fps = smp.frametime()
     assert fps == 60.0 and abs(ft - 17.1) < 0.01
     assert smp.frametime() == (None, None)            # nothing new
-
 
 
 def test_sampler_reads_only_the_running_games_mangohud_log(fake_hw, tmp_path):
@@ -184,7 +180,6 @@ def test_sampler_caches_the_dear_reads(fake_hw, tmp_path, monkeypatch):
         smp.frametime()
         smp.gpu_busy()
     assert len(globs) == 1 and len(busy) == 1        # one directory listing, one D-Bus call, not 20 of each
-
 
 
 def test_half_written_mangohud_row_waits_for_the_rest(fake_hw, tmp_path):
@@ -239,7 +234,6 @@ def test_tdp_reads_back_from_rapl_and_failures_are_explained(fake_hw, tmp_path):
     assert sysfs.last_error() is None
     assert not sysfs.write(str(tmp_path / "missing/dir/file"), 1)      # a refused write says why
     assert "writing 1 to" in (sysfs.last_error() or "") and "file" in sysfs.last_error()
-
 
 
 def test_cpu_boost_lever_and_profile(fake_hw):
@@ -302,86 +296,36 @@ def test_thermald_paused_while_tdp_held_and_restarted_on_revert(fake_hw, monkeyp
 
 # ---- autotune v3 (findings §22): the most the set TDP gives, CPU/GPU balance, the lowest TDP within KEEP % --------
 class _Game:
-    """A game whose rendered fps follows the power it gets: fps(tdp, cpu_max_pct, gpu_min_mhz, boost)."""
+    """A game whose fps follows the power it gets: fps(tdp, cpu_max_pct, gpu_min_mhz, boost), one sample a look."""
     def __init__(self, at, fps, **smp):
-        self.at, self.fps, self.smp = at, fps, smp
+        self.at, self.fps, self.smp, self.t = at, fps, smp, time.monotonic()
         at.sampler.sample = self.sample
+        at.sampler.frames_ms = []                  # no per-frame log: that look's frames at their average
 
     def sample(self):
-        l = self.at.session.learned
+        s = self.at.session
+        self.t += s.look_s
+        l = s.learned
         f = self.fps(l.tdp, l.cpu_max_pct, l.gpu_min_mhz, l.boost)
-        base = dict(gpu_mhz=1500, gpu_max_mhz=2400, cpu_pct=40, pkg_w=float(l.tdp), gpu_busy=70, source="rendered", shown_fps=f)
+        base = dict(gpu_mhz=1500, gpu_max_mhz=2400, cpu_pct=40, pkg_w=float(l.tdp), gpu_busy=70, source="presented", shown_fps=f)
         base.update(self.smp)
-        return autotune.Sample(t=time.monotonic(), frametime_ms=1000.0 / f, fps=f, **base)
+        return autotune.Sample(t=self.t, frametime_ms=1000.0 / f if f else None, fps=f, **base)
+
+    def run(self, seconds):
+        end = self.t + seconds
+        while self.t < end - 1e-9 and self.at.session is not None:
+            self.at._step()
+        return self
 
 
-def _tuner(fake_hw, monkeypatch, ceiling=20, **learned):
+def _tuner(fake_hw, monkeypatch, ceiling=20, target=None, **learned):
     pw = power.Power(fake_hw)
-    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: True)    # a Claw whose TDP writes work
+    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: True)
+    monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
+    monkeypatch.setattr(autotune, "own_pace_emulator", lambda proc=None: None)
     at = autotune.Autotune(fake_hw, pw, log_dir="/nonexistent", csv_log=None)
-    at.session = autotune.Session(appid="1", floor_tdp=8, ceiling_tdp=ceiling, settle=1,
-                                  learned=autotune.Learned(**{"tdp": ceiling, **learned}))
+    at.start("1", {"ceiling": ceiling, "target": target, **learned} if learned else None, 8, ceiling, False, target=target)
     return at, at.session
-
-
-def test_autotune_finds_the_lowest_tdp_within_keep_of_the_most(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp))            # capped at 60 fps from 20 W, 3 fps per watt below
-    for _ in range(3):
-        at._step()
-    assert s.learned.max_fps == 60 and s.phase == "balance"    # median of three windows at the set TDP
-    for _ in range(12):
-        at._step()
-    # 19 W gives 57 fps = 95 % of 60, the line; 18 W gives 54, missed twice, so back up to 19 W and hold there
-    assert s.learned.tdp == 19 and s.phase == "hold" and s.learned.fps == 57
-    st = at.status()
-    assert st["max_fps"] == 60 and st["pct_of_max"] == 100 or st["pct_of_max"] >= 95
-    assert st["fps_per_w"] and st["source"] == "rendered"
-    at.session = None
-
-
-def test_autotune_one_slow_window_is_measured_again_not_acted_on(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    seq = iter([60, 60, 60, 60, 59, 40, 59, 59])               # one heavy patch of the map at 18 W
-    _Game(at, lambda *_: float(next(seq)))
-    for _ in range(7):
-        at._step()
-    # 40 fps once was measured again, not acted on: the next window held the line, so lowering went on
-    assert s.learned.tdp < 18 and s.phase == "balance" and s.last_delta.startswith("−")
-    at.session = None
-
-
-def test_autotune_keeps_a_cpu_gpu_lever_only_if_it_helps(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    # GPU-bound: a higher GPU floor helps once (+4 %), the second step doesn't and is undone. The CPU ceiling is never
-    # trimmed any more (no proven tool does it; it hurts frame pacing)
-    _Game(at, lambda tdp, cpu, gmin, *_: (52.0 if gmin else 50.0) if tdp == 20 else 30.0, cpu_pct=35, gpu_busy=97)
-    for _ in range(3):
-        at._step()
-    assert s.learned.max_fps == 50
-    at._step()
-    assert s.learned.gpu_min_mhz and "trying" in s.last_action and "GPU floor" in s.last_action
-    first = s.learned.gpu_min_mhz
-    at._step()                                                  # +4 %: kept; the next step is tried
-    assert s.learned.max_fps == 52 and s.learned.gpu_min_mhz == first + autotune.GPU_STEP_MHZ
-    at._step()                                                  # no gain: undone
-    assert s.learned.gpu_min_mhz == first and "undone" in s.last_action
-    assert s.learned.cpu_max_pct == 100
-    at.session = None
-
-
-def test_autotune_cpu_bound_gets_boost_before_anything_else(fake_hw, monkeypatch):
-    _w(fake_hw.paths.cpu_no_turbo, 1)
-    at, s = _tuner(fake_hw, monkeypatch, boost=False, cpu_max_pct=70)
-    _Game(at, lambda tdp, cpu, gpu, boost: 40.0 + (5 if boost else 0) + (5 if cpu == 100 else 0), cpu_pct=95, gpu_busy=50)
-    for _ in range(4):
-        at._step()
-    assert s.learned.boost and sysfs.read_int(fake_hw.paths.cpu_no_turbo) == 0
-    at._step(); at._step()
-    assert s.learned.cpu_max_pct == 100 and s.learned.max_fps == 50
-    sysfs.revert_all()
-    assert sysfs.read_int(fake_hw.paths.cpu_no_turbo) == 1      # every lever it moved is revertible
-    at.session = None
 
 
 def test_autotune_counts_rendered_frames_not_generated_ones(fake_hw, tmp_path):
@@ -405,88 +349,69 @@ def test_autotune_counts_rendered_frames_not_generated_ones(fake_hw, tmp_path):
     assert s.source == "presented" and s.fps is None                 # (no new MangoHud row this second)
 
 
-def test_autotune_measures_again_when_frame_generation_changes(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    shown = {"x": 2.0}
-    g = _Game(at, lambda *_: 30.0)
-    real = g.sample
-    g.sample = lambda: (lambda smp: (setattr(smp, "shown_fps", 30.0 * shown["x"]), smp)[1])(real())
-    at.sampler.sample = g.sample
-    for _ in range(5):
-        at._step()
-    assert s.phase != "measure" and s.multiplier == 2.0
-    shown["x"] = 3.0                                            # the player switched XeSS FG from 2x to 3x
-    at._step()
-    assert s.phase == "measure" and "frame generation changed" in s.last_action
-    at.session = None
-
-
-def test_autotune_a_new_scene_or_the_clock_measures_again(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    fps = {"v": 60.0}
-    _Game(at, lambda tdp, *_: fps["v"] if tdp >= 19 else fps["v"] * 0.8)
-    for _ in range(14):
-        at._step()
-    assert s.phase == "hold" and s.learned.tdp == 19
-    fps["v"] = 40.0                                             # a much heavier area: watts back at once
-    at._step(); at._step()
-    assert s.learned.tdp == 20 and "at once" in s.last_action
-    for _ in range(4):
-        at._step()
-    assert s.learned.max_fps == 40.0 and s.learned.tdp == 20    # ... and the new area is measured
-    at.session.phase, at.session.measured_at = "hold", time.monotonic() - autotune.RESCAN_S - 1
-    s.learned.fps = 40.0
-    at._step()
-    assert s.phase == "measure" and "routine" in s.last_action
-    at.session = None
-
-
-def test_set_tdp_is_measured_again_and_hands_control_back(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch, tdp=15)
-    at.pause("manual GPU clocks")
-    assert at.set_ceiling(12) == 12 and s.phase == "measure" and not s.paused
-    at.set_ceiling(3)
-    assert s.ceiling_tdp == 8                                   # never below the model's minimum
-    s.ceiling_tdp = 20
+def test_a_new_floor_is_in_effect_at_once(fake_hw, monkeypatch):
+    at, s = _tuner(fake_hw, monkeypatch, tdp=20)
     at.set_floor(10)
-    assert s.floor_tdp == 10 and s.learned.tdp >= 10
+    assert s.floor_tdp == 10 and s.learned.tdp >= 10 and s.cfg.floor == 10
+    at.session = None
 
 
-def test_autotune_start_reuses_a_result_only_for_the_same_ceiling(fake_hw, monkeypatch):
+def test_a_raised_floor_ends_a_second_try_under_it(fake_hw, monkeypatch):
+    from test_governor import _into_retest
+    g, held = _into_retest()
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    s.gov, s.cfg, s.learned.tdp = g.st, g.cfg, g.limit
+    assert s.gov.mode == "probe" and s.gov.retest and s.learned.tdp == held
+    at.set_floor(held + 1)
+    g.limit = s.learned.tdp
+    g.run(0.2)
+    assert s.gov.mode == "hold" and not s.gov.retest
+    g.run(15)
+    at.session = None
+    assert not any("own dip" in n for _, n in g.notes), g.notes[-3:]
+
+
+def test_autotune_starts_where_the_game_held_under_the_same_limit_and_target_else_mid_range(fake_hw, monkeypatch):
     pw = power.Power(fake_hw)
     monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: True)
     at = autotune.Autotune(fake_hw, pw, "/nonexistent")
     monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
     saved = {"tdp": 14, "max_fps": 60.0, "fps": 58.0, "ceiling": 20, "cpu_max_pct": 90, "confidence": 3}   # + an old key
     at.start("1", saved, 8, 20, False)
-    assert at.session.phase == "hold" and at.session.learned.tdp == 14
-    at.start("1", saved, 8, 25, False)                          # a different set TDP: measure what it gives
-    assert at.session.phase == "measure" and at.session.learned.tdp == 25 and at.session.learned.cpu_max_pct == 90
+    assert at.session.learned.tdp == 14                         # an earlier build's result: the limit it ended with
+    at.start("1", {**saved, "start": 16}, 8, 20, False)
+    assert at.session.learned.tdp == 16                         # where it held, as saved now
+    at.start("1", {**saved, "start": 16}, 8, 26, False)         # another limit: nothing known, mid-range
+    assert at.session.learned.tdp == 17 and at.session.learned.ceiling == 26
+    at.start("1", {**saved, "start": 16}, 8, 20, False, target=60)   # another goal: the same
+    assert at.session.learned.tdp == 14 and at.session.user_target == 60
+    at.start("1", {**saved, "start": 16}, 8, 20, False, at_limit=True)   # picked in the game just now: as picked
+    assert at.session.learned.tdp == 20
+    at.start("1", None, 8, 30, False)
+    assert at.session.learned.tdp == 19
+    assert (at.session.user_target, at.session.auto_fps) == (120, True)   # no target set: the screen's highest refresh rate
+    at.start("1", None, 8, 30, False, auto_fps=False)
+    assert at.session.auto_fps is True                          # ... which Auto FPS turns into the most frames the limit gives
     at.session = None
 
 
 def test_autotune_pause_stops_changes(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp))
-    for _ in range(4):
-        at._step()
+    at, s = _tuner(fake_hw, monkeypatch, tdp=20)
+    g = _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(30)   # 60 fps from 15 W up
     t = s.learned.tdp
-    assert t < 20                                               # it lowered (a 3 W step from the top)
+    assert 15 <= t < 20                                         # it works down from where it started
     at.pause()
-    assert s.learned.tdp == 20                                  # the set TDP again, not autotune's
-    for _ in range(5):
-        at._step()
-    assert s.learned.tdp == 20
-    assert at.stop(revert=False)["learned"]["tdp"] == t         # what it had found is what the game's profile gets
+    assert s.learned.tdp == 20                                  # the limit is yours again, not where Autotune was
+    g.run(30)
+    assert s.learned.tdp == 20 and at.status()["saves_w"] is None
+    at.session = None
 
 
 def test_autotune_a_refused_tdp_is_not_learned(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
+    at, s = _tuner(fake_hw, monkeypatch, tdp=20)
     monkeypatch.setattr(at.power, "set_tdp", lambda w, plugged=None: False)   # e.g. HHD's TDP controls not enabled
-    _Game(at, lambda *_: 60.0)
-    for _ in range(5):
-        at._step()
-    assert s.learned.tdp == 20 and s.phase == "hold"
+    _Game(at, lambda *_: 60.0).run(30)
+    assert s.learned.tdp == 20 and s.gov.limit == 20            # the governor goes on from what is on the chip
     at.session = None
 
 
@@ -629,27 +554,26 @@ def test_cpu_clock_cap_holds_under_every_other_write_and_lets_it_back(fake_hw):
 
 def test_autotune_stays_under_the_thermal_step_until_the_user_sets_a_tdp(fake_hw, monkeypatch):
     at, s = _tuner(fake_hw, monkeypatch, ceiling=25)
-    _Game(at, lambda tdp, *_: 2.0 * tdp)                  # every watt buys frames: autotune wants the full 25 W
-    for _ in range(3):
-        at._step()
-    assert s.learned.max_fps == 50 and s.learned.tdp == 25
+    g = _Game(at, lambda tdp, *_: 2.0 * tdp).run(15)       # every watt buys frames: it stays within a watt of 25 W
+    assert s.learned.max_fps == pytest.approx(50, abs=0.5) and s.learned.tdp >= 24
     assert at.thermal_step(23) and s.learned.tdp == 23 and s.thermal_cap == 23
     assert at.status()["thermal_cap"] == 23 and s.last_action == "thermal: stepped to 23 W"
-    for _ in range(30):
+    for _ in range(60):
         at._step()
-        assert s.learned.tdp <= 23                         # never back above the step, whatever the phase
-    s.phase = "measure"
-    at._remeasure(s, "routine check")                      # a re-measure goes to the step, not the set TDP
-    assert s.learned.tdp == 23 and "23 W" in s.last_action
-    assert at.set_ceiling(25) == 25 and s.thermal_cap is None   # the user's choice replaces the step
+        assert s.learned.tdp <= 23                         # never back above the step, whatever it is doing
     at.session = None
 
 
-def test_thermal_step_undoes_a_lever_on_trial(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=20)
-    undone = []
-    s.phase, s.balance_undo = "balance", ("cpu_down", lambda: undone.append(1), 50.0, "lowered CPU ceiling", "−10 %")
-    assert at.thermal_step(18) and undone == [1] and s.balance_undo is None and s.learned.tdp == 18
+def test_a_cpu_clock_cap_from_the_guard_starts_the_search_over(fake_hw, monkeypatch):
+    at, s = _tuner(fake_hw, monkeypatch, tdp=20)
+    _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(40)
+    assert s.gov.fail
+    at.thermal_clock(80)
+    assert s.clock_pct == 80 and not s.gov.fail and s.last_action == "thermal: CPU clock capped at 80 %"
+    s.gov.lo, s.gov.hi, s.gov.ratio, s.gov.ref, s.gov.seen_hi, s.gov.fail[12] = 50.0, 50.0, 1.0, 50.0, 50.0, [1e12, 1, None, False, 0.0]
+    at.thermal_clock(None)
+    assert s.clock_pct is None and s.last_action == "thermal: CPU clock uncapped"
+    assert (s.gov.lo, s.gov.ratio, s.gov.ref, s.gov.seen_hi, s.gov.fail) == (None, None, None, None, {})   # all of the cap's
     at.session = None
 
 
@@ -780,23 +704,15 @@ def test_pl1_window_set_restore_and_revert(fake_hw, tmp_path):
     assert sysfs.read_int(t) == TAU_FW                               # profile writes outside autotune leave it alone
 
 
-def test_autotune_learns_on_an_8s_window_and_gives_the_firmwares_back_once_settled(fake_hw, monkeypatch, tmp_path):
+def test_autotune_governs_on_an_8s_window_and_gives_the_firmwares_back_when_it_stops(fake_hw, monkeypatch, tmp_path):
     t = _with_tau(fake_hw, tmp_path)
     at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp))
-    at._step()                                                       # first window, measuring
-    assert sysfs.read_int(t) == 8_000_000 and s.short_tau and at.status()["learning"]
-    steps = 0
-    while s.phase != "hold" and steps < 40:
-        at._step(); steps += 1
-        assert sysfs.read_int(t) == 8_000_000                        # every learning window on sustained power
-    assert s.phase == "hold"
-    for _ in range(autotune.SETTLED_WINDOWS):
+    assert sysfs.read_int(t) == 8_000_000 and s.short_tau              # from the start: a step down has to bind
+    g = _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp))
+    for _ in range(200):
         at._step()
-    assert sysfs.read_int(t) == TAU_FW and not s.short_tau           # learned: the 56 s boost window is back
-    assert not at.status()["learning"] and at.status()["pl1_window_s"] == 56.0
-    at._remeasure(s, "routine check")                                # learning again: short at once
-    assert sysfs.read_int(t) == 8_000_000
+        assert sysfs.read_int(t) == 8_000_000                        # the whole session, no switching
+    assert at.status()["pl1_window_s"] == 8.0
     at.stop()                                                        # game closed: everything reverts
     assert sysfs.read_int(t) == TAU_FW
 
@@ -804,35 +720,41 @@ def test_autotune_learns_on_an_8s_window_and_gives_the_firmwares_back_once_settl
 def test_autotune_gives_the_window_back_when_paused_and_stops_asking_if_refused(fake_hw, monkeypatch, tmp_path):
     t = _with_tau(fake_hw, tmp_path)
     at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda *_: 50.0)
-    at._step()
+    g = _Game(at, lambda *_: 50.0).run(2)
     assert sysfs.read_int(t) == 8_000_000
     at.pause("CPU ceiling by hand")
     at._step()
     assert sysfs.read_int(t) == TAU_FW and not s.short_tau           # the user has the controls
     at.session = None
-    at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda *_: 50.0)
+    pw = power.Power(fake_hw)
+    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: True)
     tries = []
-    monkeypatch.setattr(at.power, "set_pl1_window", lambda us: tries.append(us) or False)
-    for _ in range(5):
-        at._step()
-    assert tries == [8_000_000] and s.tau_refused and sysfs.read_int(t) == TAU_FW
+    monkeypatch.setattr(pw, "set_pl1_window", lambda us: tries.append(us) or False)
+    at = autotune.Autotune(fake_hw, pw, log_dir="/nonexistent", csv_log=None)
+    at.start("1", None, 8, 20, False)
+    _Game(at, lambda *_: 50.0).run(5)
+    assert tries == [8_000_000] and at.session.tau_refused and sysfs.read_int(t) == TAU_FW
     at.session = None
 
 
-def test_a_saved_result_starts_settled_with_the_firmwares_window(fake_hw, monkeypatch, tmp_path):
-    t = _with_tau(fake_hw, tmp_path)
-    pw = power.Power(fake_hw)
-    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: True)
-    at = autotune.Autotune(fake_hw, pw, log_dir="/nonexistent")
+def test_a_pl2_set_by_hand_is_the_picks_not_the_governed_limits(fake_hw, tmp_path, monkeypatch):
+    root = tmp_path / "rapl"
+    _w(str(root / "constraint_0_power_limit_uw"), 25_000_000)
+    _w(str(root / "constraint_1_power_limit_uw"), 37_000_000)
+    fake_hw.paths.rapl_pl1, fake_hw.paths.rapl_pl2 = str(root / "constraint_0_power_limit_uw"), str(root / "constraint_1_power_limit_uw")
+    monkeypatch.setattr(power, "thermald_active", lambda: False)
     monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
-    at.start("1", {"tdp": 17, "ceiling": 20, "max_fps": 60}, 8, 20)
-    assert at.session.phase == "hold" and sysfs.read_int(t) == TAU_FW
-    at.start("2", None, 8, 20)
-    assert at.session.phase == "measure" and sysfs.read_int(t) == 8_000_000
-    at.stop()
-    assert sysfs.read_int(t) == TAU_FW
+    pw = power.Power(fake_hw)
+    pw.pl2_w = 45
+    pw.set_tdp(30, False)
+    assert sysfs.read_int(fake_hw.paths.rapl_pl2) == 45_000_000      # the pick: your PL2
+    at = autotune.Autotune(fake_hw, pw, log_dir="/nonexistent", csv_log=None)
+    at.start("1", None, 8, 30, False)
+    assert sysfs.read_int(fake_hw.paths.rapl_pl1) == 19_000_000 and sysfs.read_int(fake_hw.paths.rapl_pl2) == 21_000_000
+    at.pause("manual change")
+    at._give_back(at.session)
+    assert sysfs.read_int(fake_hw.paths.rapl_pl1) == 30_000_000 and sysfs.read_int(fake_hw.paths.rapl_pl2) == 45_000_000
+    at.session = None
 
 
 # ---- GPU efficiency mode: xe power_profile (findings §22.3) --------------------------------------------------------
@@ -886,60 +808,6 @@ def test_a_kernel_without_power_saving_is_left_alone(fake_hw, monkeypatch):
     _with_power_profile(fake_hw, monkeypatch, offered=("base",))
     r = power.Power(fake_hw).apply_profile("saver", plugged=False)
     assert "gpu_power_profile" not in r["applied"] and "gpu_power_profile" not in r["failed"]
-
-
-def test_autotune_gpu_bound_turns_efficiency_mode_off_before_any_floor(fake_hw, monkeypatch):
-    _with_power_profile(fake_hw, monkeypatch, active="power_saving")
-    at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda *_: 40.0, gpu_mhz=2400, gpu_max_mhz=2400, gpu_busy=98)     # GPU-bound
-    s.learned.bound = "gpu"
-    assert at._levers(s)[0][0] == "gpu_base"
-    for _ in range(4):
-        at._step()
-    assert "gpu_base" in s.balance_tried and at.power.gpu_power_profile()[0] == "base"    # tried first
-    assert s.last_delta == "GPU efficiency off"
-    at.session = None
-
-
-def test_autotune_tries_efficiency_mode_at_the_floor_and_keeps_it_only_on_the_line(fake_hw, monkeypatch):
-    _with_power_profile(fake_hw, monkeypatch)
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=9)
-    fps = {"v": 60.0}
-    _Game(at, lambda *_: fps["v"])
-    for _ in range(3):
-        at._step()                                                   # measured: 60 at 9 W
-    for _ in range(2):
-        at._step()                                                   # lowered to the 8 W floor, still on the line
-    assert s.learned.tdp == 8 and s.phase == "hold" and s.eff_trial
-    assert at.power.gpu_power_profile()[0] == "power_saving" and s.last_delta == "GPU efficiency on"
-    at._step()                                                       # 60 fps held: kept
-    assert at.power.gpu_power_profile()[0] == "power_saving" and s.learned.gpu_profile == "power_saving"
-    assert "kept" in s.last_action
-    for _ in range(3):
-        at._step()
-    assert not s.eff_trial and at.power.gpu_power_profile()[0] == "power_saving"   # tried once, not every window
-    at.session = None
-    # a game that loses frames with it: undone after one window
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=9)
-    at.power.set_gpu_power_profile("base")
-    seq = iter([60.0] * 5 + [50.0])
-    _Game(at, lambda *_: next(seq))
-    for _ in range(6):
-        at._step()
-    assert at.power.gpu_power_profile()[0] == "base" and "undone" in s.last_action
-    at.session = None
-
-
-def test_autotune_short_in_hold_and_gpu_bound_turns_efficiency_off_before_adding_watts(fake_hw, monkeypatch):
-    _with_power_profile(fake_hw, monkeypatch, active="power_saving")
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=20)
-    s.phase, s.learned.max_fps, s.learned.fps, s.learned.tdp = "hold", 60.0, 58.0, 15
-    s.learned.bound = "gpu"
-    s.measured_at = time.monotonic()
-    _Game(at, lambda *_: 54.0, gpu_mhz=2400, gpu_max_mhz=2400, gpu_busy=98)
-    at._step(); at._step()
-    assert at.power.gpu_power_profile()[0] == "base" and s.learned.tdp == 15 and s.last_delta == "GPU efficiency off"
-    at.session = None
 
 
 # ---- efficiency sweep tool (findings §22.1): TDP stepping + CSV; the run itself is manual -------------------------
@@ -1008,47 +876,6 @@ def _run(at, n):
         at._step()
 
 
-def test_autotune_plateau_goes_low_with_big_steps(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=35)
-    # a plateau: 60 fps at 35 W, 59 at 22 W, then steep below (3 fps per watt)
-    _Game(at, lambda tdp, *_: 60.0 - (35 - tdp) / 13.0 if tdp >= 22 else 59.0 - 3.0 * (22 - tdp))
-    steps = []
-    orig = at._did
-    at._did = lambda sess, a, d: (steps.append(d), orig(sess, a, d))[1]
-    _run(at, 80)
-    assert s.learned.tdp <= 23 and s.phase == "hold"
-    assert s.learned.fps >= 57                                  # lost at most ~3 fps (5 % of 60)
-    assert "−3 W" in steps                                      # big steps while clearly above the line
-    st = at.status()
-    assert st["saves_w"] and st["saves_w"] >= 12
-    at.session = None
-
-
-def test_autotune_steep_curve_stops_early(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=35)
-    _Game(at, lambda tdp, *_: min(60.0, 2.5 * tdp))            # 60 fps needs 24 W; every watt below costs 2.5 fps
-    _run(at, 80)
-    assert 23 <= s.learned.tdp <= 25 and s.learned.fps >= 57 and s.phase == "hold"
-    at.session = None
-
-
-def test_autotune_low_fps_game_keeps_two_fps(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=30)
-    _Game(at, lambda tdp, *_: min(30.0, 1.0 * tdp + 8))         # 30 fps from 22 W, -1 fps per watt below
-    _run(at, 80)
-    # 5 % of 30 is 1.5 fps, so the 2 fps rule decides: 28 fps at 20 W is the lowest that holds
-    assert s.learned.tdp == 20 and s.phase == "hold"
-    at.session = None
-
-
-def test_autotune_frame_limited_holds_the_limit_at_the_floor(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=35)
-    _Game(at, lambda tdp, *_: 40.0 if tdp >= 12 else 40.0 - 4 * (12 - tdp))   # a 40 fps limit, reached from 12 W
-    _run(at, 80)
-    assert s.learned.tdp >= s.floor_tdp and s.learned.tdp <= 13 and s.learned.fps >= 38
-    at.session = None
-
-
 # ---- the power path end to end (maintainer, 2026-11-04): your pick, Autotune under it, back to the pick on exit -----
 FW_PL1, FW_PL2 = 25_000_000, 37_000_000      # what the firmware holds before ClawDeck (boot values)
 
@@ -1104,12 +931,9 @@ def plugin(fake_hw, tmp_path, monkeypatch):
 
 
 def _lower(p, steps=30):
-    """Autotune runs for a while in a game that gets 60 fps from 15 W up (4 fps per watt below)."""
+    """Autotune runs for a while (steps: seconds) in a game that gets 60 fps from 15 W up (4 fps per watt below)."""
     s = p.autotune.session
-    s.settle = 1
-    _Game(p.autotune, lambda tdp, *_: min(60.0, 4.0 * tdp))
-    for _ in range(steps):
-        p.autotune._step()
+    _Game(p.autotune, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(steps)
     return s
 
 
@@ -1135,47 +959,81 @@ def test_each_game_an_emulator_frontend_starts_has_its_own_power_and_autotune(pl
     esde, demons, ratchet = "3119184808", "3119184808#ps3/Demon's Souls", "3119184808#ps3/Ratchet"
     p.profiles.set(esde, False, {"base": "custom", "tdp": 12})        # ES-DE's own pick: 12 W in its menus
     p.run(p.game_started(esde))
-    assert p.chip() == 12 and p.autotune.session.appid == esde
+    assert p.chip() == 10 and p.autotune.session.appid == esde and p.autotune.session.ceiling_tdp == 12   # mid-range
     assert _frontend_event(p, "start", "ps3", "/roms/ps3/Demon's Souls.iso", "Demon's Souls")
     assert p.running_key == demons and p.running_appid == esde and p.autotune.session.appid == demons
-    assert p.chip() == 12                                              # never played: starts at ES-DE's pick
+    assert p.chip() == 10 and p.autotune.session.ceiling_tdp == 12     # never played: mid-range under ES-DE's pick
     p.run(p.set_tdp(18))                                               # a pick in this game is this game's
     assert p.profiles.own(demons, False)["tdp"] == 18 and p.profiles.own(esde, False)["tdp"] == 12
     slot = p.run(p.power_slot(esde))
     assert slot["title"] == "Demon's Souls" and slot["tdp"] == 18
     assert p.run(p.get_autotune())["game"] == esde                     # Steam's app: the panel doesn't report it again
     assert _frontend_event(p, "end", "ps3", "/roms/ps3/Demon's Souls.iso", "Demon's Souls")
-    assert p.running_key == esde and p.chip() == 12 and p.autotune.session.appid == esde
+    assert p.running_key == esde and p.chip() == 10 and p.autotune.session.appid == esde
     p.profiles.set(esde, False, {"learned": {"tdp": 9, "ceiling": 12, "max_fps": 200}})   # Autotune's result in ES-DE's menus
     assert _frontend_event(p, "start", "ps3", "/roms/ps3/Ratchet.iso", "Ratchet")
-    assert p.running_key == ratchet and p.chip() == 12                 # a new game: ES-DE's pick, not its learned 9 W
+    assert p.running_key == ratchet and p.chip() == 10                 # a new game: under ES-DE's pick, not its learned 9 W
     assert _frontend_event(p, "start", "ps3", "/roms/ps3/Ratchet.iso", "Ratchet") is None   # the same game: no restart
     p.run(p.game_stopped(esde))
     assert p.running_key is None and p.running_title is None
 
 
-def test_what_a_frontends_menus_hold_is_not_the_pick_its_games_start_from(plugin, monkeypatch):
-    """With a target, the TDP that held is saved as the game's own pick. ES-DE's menus hold 60 fps at 8 W, and a game
-    ES-DE starts without a pick of its own starts from ES-DE's slot: Project Gotham Racing 2 in xemu, where Autotune
-    stays out, ran at 8 W (2026-11-16). What the menus held is not saved as ES-DE's pick; a ROM's own result still is."""
+def test_what_autotune_learned_is_never_saved_or_shown_as_your_pick(plugin):
+    """Your pick (`base`, `tdp`: the slider, a profile, Use default) and what Autotune learned (`learned`) are two
+    records in a game's slot, and only your actions write the first. A game that held 8 W for minutes keeps no pick:
+    the slider shows your 30 W, and the next start works under 30 W."""
     p = plugin
-    esde, pgr2 = "3119184808", "3119184808#xbox/PGR2"
-    monkeypatch.setattr(frontend, "esde_shortcut", lambda home: (esde, ""))
+    p.settings["autotune_target"] = 60
+    p.run(p.set_tdp(30))                                               # your pick for every game
+    p.run(p.game_started("42"))
+    s = p.autotune.session
+    s.learned.tdp, s.learned.start, s.settled = 8, 8, True             # 60 fps at 8 W, for minutes
+    p.run(p.game_stopped("42"))
+    own = p.profiles.own("42", False)
+    assert own["learned"]["start"] == 8 and "tdp" not in own and not own.get("base")
+    slot = p.run(p.power_slot("42"))
+    assert slot["tdp"] is None and slot["base"] is None                # no "Saved for this game"
+    assert slot["pick"]["tdp"] == 30 and slot["pick"]["from"] != "game"
+    p.run(p.game_started("42"))
+    assert p.autotune.session.ceiling_tdp == 30 and p.autotune.session.learned.start == 8   # learning, under your limit
+
+
+def test_what_a_frontends_menus_hold_is_never_the_limit_of_its_games(plugin):
+    """ES-DE's menus hold 60 fps at 8 W, and a game ES-DE starts without a pick of its own starts from ES-DE's pick.
+    What held is learning under the game's own key and never a pick: ES-DE's slot gets no TDP, and its games work
+    under your limit."""
+    p = plugin
+    esde = "3119184808"
     p.settings["autotune_target"] = 60
     p.run(p.set_tdp(30))
     p.run(p.game_started(esde))
-    p.autotune.session.settled, p.autotune.session.learned.held = True, 8        # the menus: 60 fps at 8 W
+    s = p.autotune.session
+    s.learned.tdp, s.learned.start, s.settled = 8, 8, True             # the menus: 60 fps at 8 W, for minutes
     assert _frontend_event(p, "start", "xbox", "/roms/xbox/PGR2.iso", "PGR2")
-    assert "tdp" not in p.profiles.own(esde, False) and p.chip() == 30           # the game starts at your 30 W
-    p.autotune.session.settled, p.autotune.session.learned.held = True, 24
+    own = p.profiles.own(esde, False)
+    assert own["learned"]["start"] == 8 and "tdp" not in own and not own.get("base")    # learning, not a pick
+    s = p.autotune.session
+    assert s.ceiling_tdp == 30 and s.learned.start is None             # your limit, and nothing of the menus
     assert _frontend_event(p, "end", "xbox", "/roms/xbox/PGR2.iso", "PGR2")
-    assert p.profiles.own(pgr2, False)["tdp"] == 24                              # the game's own result is its pick
-    p.autotune.session.settled, p.autotune.session.learned.held = True, 8
-    p.run(p.game_stopped(esde))                                                  # ES-DE closed from its menus
-    assert "tdp" not in p.profiles.own(esde, False)
+    p.autotune.session.learned.start, p.autotune.session.settled = 8, True
+    p.run(p.game_stopped(esde))                                        # ES-DE closed from its menus
+    own = p.profiles.own(esde, False)
+    assert "tdp" not in own and not own.get("base")
     p.run(p.game_started(esde))
     assert _frontend_event(p, "start", "xbox", "/roms/xbox/Halo.iso", "Halo")
-    assert p.chip() == 30
+    assert p.autotune.session.ceiling_tdp == 30
+
+
+def test_a_frontend_games_own_settings_count_without_a_power_choice_of_its_own(plugin):
+    """A game started by a frontend whose own slot holds settings but no power choice ("autotune": false for this
+    game): those settings are the game's, not the frontend's (Autotune ran in it)."""
+    p = plugin
+    esde, game = "3119184808", "3119184808#ps3/Demon's Souls"
+    p.profiles.set(esde, False, {"base": "custom", "tdp": 12})
+    p.profiles.set(game, False, {"autotune": False, "cpu_max_pct": 70})
+    p.run(p.game_started(esde))
+    assert _frontend_event(p, "start", "ps3", "/roms/ps3/Demon's Souls.iso", "Demon's Souls")
+    assert p._profile_source(game, False) == game and p.autotune.session is None
 
 
 def test_a_frontend_game_has_no_launch_file_of_its_own(plugin, monkeypatch):
@@ -1204,13 +1062,13 @@ def test_game_exit_puts_your_pick_back_not_the_firmwares_limits(plugin):
     r = p.run(p.set_tdp(20))                                       # the slider in the menus, no game
     assert r["ok"] and p.chip() == 20 and not p.thermald["active"]
     p.run(p.game_started("42"))
-    assert p.chip() == 20 and p.autotune.session.ceiling_tdp == 20
-    s = _lower(p)
+    assert p.chip() == 14 and p.autotune.session.ceiling_tdp == 20     # no history: mid-range, under your 20 W
+    s = _lower(p, 120)
     assert s.learned.tdp < 20 and p.chip() == s.learned.tdp       # Autotune uses less than your 20 W
     p.run(p.game_stopped("42"))
     assert p.chip() == 20                                          # your limit, not the firmware's 25 W
     assert sysfs.read_int(p.hw.paths.rapl_pl1) == 20_000_000
-    assert p.profiles.own("42", False)["learned"]["tdp"] < 20      # what it learned is kept for the next start
+    assert p.profiles.own("42", False)["learned"]["start"] < 20    # where it held is kept for the next start
     p.run(p._unload())                                             # unloading still reverts everything
     assert sysfs.read_int(p.hw.paths.rapl_pl1) == FW_PL1 and p.thermald["active"]
 
@@ -1218,7 +1076,7 @@ def test_game_exit_puts_your_pick_back_not_the_firmwares_limits(plugin):
 def test_never_picked_on_this_power_source_leaves_the_firmware_and_thermald(plugin):
     p = plugin
     p.run(p.game_started("42"))                                    # default for battery: Battery 12 W
-    assert p.chip() == 12 and not p.thermald["active"]
+    assert p.chip() == 10 and not p.thermald["active"]
     _lower(p, 5)
     p.run(p.game_stopped("42"))
     assert sysfs.read_int(p.hw.paths.rapl_pl1) == FW_PL1 and p.thermald["active"]
@@ -1250,6 +1108,57 @@ def test_status_shows_your_limit_and_what_autotune_uses(plugin):
     assert slot["pick"] == {"profile": "max", "tdp": 35, "from": "last"} and slot["running"]
 
 
+def test_autotunes_own_maximum_is_the_limit_where_autotune_governs_and_the_tdp_setting_where_not(plugin):
+    """Autotune off: the TDP setting is the limit. Autotune on: a target under Autotune's own maximum (none set: the
+    TDP setting). It is never saved as the TDP setting, and a change in a running game starts the game over."""
+    p = plugin
+    assert p.run(p.set_tdp(26))["ok"] and p.chip() == 26               # the TDP setting, in the menus
+    st = p.run(p.get_power())
+    assert st["autotune_max"] == 26 and st["autotune_governs"]         # none set: the TDP setting
+    r = p.run(p.set_autotune_max(20))
+    assert r["ok"] and r["max_w"] == 20 and p.settings["autotune_max"] == 20
+    assert p.chip() == 20                                              # the menus too: the TDP setting does nothing
+    p.run(p.game_started("7"))
+    s, st = p.autotune.session, p.run(p.get_power())
+    assert s.ceiling_tdp == 20 and p.chip() <= 20 and st["limit_w"] == 20 and st["autotune_max"] == 20
+    assert st["autotune_governs"]
+    r = p.run(p.set_autotune_max(24))                                  # moved in the game
+    s = p.autotune.session
+    assert r["ok"] and s.ceiling_tdp == 24 and p.chip() == 24 and not s.paused
+    assert p.settings["custom_tdp"] == 26 and p.profiles.own("7", False).get("tdp") != 24
+    assert p.run(p.set_autotune_max(99))["max_w"] == 35 and p.autotune.session.ceiling_tdp == 35   # the model's range
+    p.run(p.set_autotune_max(24))
+    assert p.run(p.set_setting("autotune", False)) and p.chip() == 26  # Autotune off: the TDP setting
+    assert not p.run(p.get_power())["autotune_governs"]
+    p.run(p.game_stopped("7"))
+    assert p.chip() == 26 and p.run(p.set_setting("autotune", True)) and p.chip() == 24   # the menus follow the switch
+    p.settings.update(autotune=True, autotune_plugged=False)           # on the charger Autotune stays off (Advanced)
+    p.ac["plugged"] = True
+    p.run(p.game_started("8"))
+    st = p.run(p.get_power())
+    assert p.autotune.session is None and not st["autotune_governs"]
+    assert p.chip() == p.run(p.power_slot("8"))["pick"]["tdp"] != 24
+    p.run(p.game_stopped("8"))
+    p.ac["plugged"] = False
+    assert p.run(p.set_autotune_max(None))["max_w"] is None and p.settings["autotune_max"] is None
+    assert p.run(p.get_power())["autotune_max"] == 26
+    p.run(p.game_started("7"))
+    assert p.autotune.session.ceiling_tdp == 26                        # the TDP setting again
+    p.run(p.game_stopped("7"))
+
+
+def test_a_game_with_autotune_off_for_it_keeps_the_tdp_setting_and_a_movable_slider(plugin):
+    p = plugin
+    p.run(p.set_tdp(26))
+    p.run(p.set_autotune_max(20))
+    p.profiles.set("9", False, {"autotune": False})
+    p.run(p.game_started("9"))
+    assert p.autotune.session is None and p.chip() == 26 and not p.run(p.get_power())["autotune_governs"]
+    p.run(p.set_autotune_max(18))                                      # not this game's limit: nothing starts over
+    assert p.autotune.session is None and p.chip() == 26
+    p.run(p.game_stopped("9"))
+
+
 def test_a_pick_in_a_game_is_the_new_limit_at_once_and_comes_back_at_the_next_start(plugin):
     p = plugin
     p.run(p.game_started("7"))
@@ -1259,7 +1168,7 @@ def test_a_pick_in_a_game_is_the_new_limit_at_once_and_comes_back_at_the_next_st
     r = p.run(p.apply_profile("balanced", "7"))
     s = p.autotune.session
     assert r["ok"] and p.chip() == 17 and r["limit_w"] == 17 and r["autotune_w"] == 17
-    assert s.ceiling_tdp == 17 and s.learned.tdp == 17 and s.phase == "measure" and not s.paused
+    assert s.ceiling_tdp == 17 and s.learned.tdp == 17 and not s.paused   # picked in the game: on the chip as picked
     assert s.learned.max_fps is None                               # measured again from the new limit
     r = p.run(p.set_tdp(26))                                       # the slider, in the game
     assert r["ok"] and p.chip() == 26 and p.autotune.session.ceiling_tdp == 26
@@ -1269,7 +1178,7 @@ def test_a_pick_in_a_game_is_the_new_limit_at_once_and_comes_back_at_the_next_st
     p.run(p.apply_profile("saver"))                                # a different pick for all games, in the menus
     assert p.chip() == 10
     p.run(p.game_started("7"))
-    assert p.chip() == 26 and p.autotune.session.ceiling_tdp == 26  # the game's own pick
+    assert p.chip() == 17 and p.autotune.session.ceiling_tdp == 26  # the game's own pick; mid-range under it
     p.run(p.game_stopped("7"))
     assert p.chip() == 10
 
@@ -1298,7 +1207,7 @@ def test_unplugging_during_and_after_a_game_follows_each_power_sources_pick(plug
     p.autotune.session.settled = True                              # it finished learning on battery
     p.ac["plugged"] = True
     r = p.run(p.power_source_changed(True))
-    assert r["changed"] and p.chip() == 35 and p.autotune.session.ceiling_tdp == 35 and p.autotune.plugged
+    assert r["changed"] and p.chip() == 22 and p.autotune.session.ceiling_tdp == 35 and p.autotune.plugged
     assert p.profiles.own("42", False).get("learned")              # battery's learning kept in its own slot
     p.run(p.game_stopped("42"))
     assert p.chip() == 35                                          # exit on the charger: the plugged-in pick
@@ -1309,46 +1218,16 @@ def test_unplugging_during_and_after_a_game_follows_each_power_sources_pick(plug
     assert r["reapplied"] and p.chip() == 20
 
 
-def test_autotune_skips_loading_screens_and_menus(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    seq = iter([60, 60, 60, 12, 61, 200, 60, 60])              # a loading screen (12) and an uncapped menu (200)
-    _Game(at, lambda *_: float(next(seq)))
-    for _ in range(3):
-        at._step()
-    assert s.learned.max_fps == 60
-    tdp = s.learned.tdp
-    at._step()                                                  # 12 fps: skipped, nothing changes
-    assert s.learned.tdp == tdp and s.skips == 1
-    at._step(); at._step()                                      # 61 judged (skips reset), 200 skipped
-    assert s.skips == 1 and s.phase != "measure"
-    at.session = None
-
-
-def test_autotune_three_odd_windows_in_a_row_are_the_game(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda *_: 60.0)
-    for _ in range(3):
-        at._step()
-    _Game(at, lambda *_: 15.0)                                  # settings turned way up: it stays at 15
-    for _ in range(3):
-        at._step()
-    assert s.skips == 0                                         # the third is used, not skipped
-    at.session = None
-
-
 def test_autotune_saves_only_a_finished_result(fake_hw, monkeypatch):
     at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp))
-    for _ in range(5):
-        at._step()
+    _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(5)
     r = at.stop(revert=False)
-    assert r["settled"] is False and "still learning" in r["summary"]
+    assert r["settled"] is False and "still learning" in r["summary"] and r["learned"]["start"] is None
     at, s = _tuner(fake_hw, monkeypatch)
-    _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp))
-    for _ in range(25):
-        at._step()
+    _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(300)       # 60 fps from 15 W up
     r = at.stop(revert=False)
-    assert r["settled"] and r["summary"].startswith("Autotune saved 19 W of your 20 W") and "saves 1 W" in r["summary"]
+    assert r["settled"] and r["learned"]["start"] in (15, 16)
+    assert r["summary"].startswith(f"Autotune held 60 fps with {r['learned']['start']} W of your 20 W") and "saves" in r["summary"]
 
 
 def test_quiet_moves_only_this_process_to_the_efficiency_cores(tmp_path, monkeypatch):
@@ -1387,12 +1266,15 @@ def test_thermal_guard_steps_back_up_to_your_limit_once_cool(tmp_path):
     assert check(60) is None and tdp["w"] == 35                           # nothing to recover: left alone
 
 
-def test_autotune_thermal_release_lifts_the_cap_and_measures_again(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=25)
-    assert at.thermal_step(19) and s.thermal_cap == 19
+def test_autotune_thermal_release_lifts_the_cap_and_raises_nothing_by_itself(fake_hw, monkeypatch):
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=25, tdp=25)
+    assert at.thermal_step(19) and s.thermal_cap == 19 and s.learned.tdp == 19
     assert at.thermal_release(21) and s.thermal_cap == 21 and s.learned.tdp == 19
-    assert at.thermal_release(25) and s.thermal_cap is None and s.phase == "measure" and s.learned.tdp == 25
+    assert at.thermal_release(25) and s.thermal_cap is None and s.learned.tdp == 19
     assert not at.thermal_release(25)
+    # ... but what the watts it got back give is looked at: a game that needs them gets them
+    _Game(at, lambda tdp, *_: 2.0 * tdp).run(20)
+    assert s.learned.tdp >= 24
     at.session = None
 
 
@@ -1638,16 +1520,13 @@ def test_optiscaler_compat_entry_sets_hook_names_reframework_and_blocks_broken(p
 
 def test_autotune_gives_up_on_a_game_without_a_frame_rate(fake_hw, monkeypatch):
     at, s = _tuner(fake_hw, monkeypatch)
-    at.sampler.sample = lambda: autotune.Sample(t=time.monotonic(), frametime_ms=None, fps=None, gpu_mhz=1500,
-                                                gpu_max_mhz=2400, cpu_pct=40, pkg_w=20.0, gpu_busy=70,
-                                                source="presented", shown_fps=None)   # no XeLL log, no MangoHud log
-    tdp = s.learned.tdp
-    for _ in range(autotune.NO_FPS_S - 1):
-        at._step()
+    g = _Game(at, lambda *_: None)                                   # no mangoapp row, no MangoHud log, no XeLL log
+    assert s.learned.tdp == 14                                       # mid-range, until something is known
+    g.run(autotune.NO_FPS_S - 1)
     assert not s.paused and not at.status()["no_frames"]
-    at._step()
+    g.run(2)
     st = at.status()
-    assert s.paused and st["no_frames"] and s.learned.tdp == tdp     # nothing changed, the limit stays
+    assert s.paused and st["no_frames"] and s.learned.tdp == 20      # your limit is back on the chip
     at.session = None
 
 
@@ -1656,15 +1535,13 @@ def test_autotune_takes_over_when_the_first_frames_come_late(fake_hw, monkeypatc
     session. Giving up puts your pick back and waits; frames after that hand it back to autotune. A manual change
     still pauses it for good."""
     at, s = _tuner(fake_hw, monkeypatch)
-    at.sampler.sample = lambda: autotune.Sample(t=time.monotonic(), frametime_ms=None, fps=None, gpu_mhz=1500,
-                                                gpu_max_mhz=2400, cpu_pct=40, pkg_w=20.0, gpu_busy=70,
-                                                source="presented", shown_fps=None)
-    for _ in range(autotune.NO_FPS_S + 20):
-        at._step()
-    assert s.paused and s.no_frames
-    _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp))
+    g = _Game(at, lambda *_: None).run(autotune.NO_FPS_S + 20)
+    assert s.paused and s.no_frames and s.learned.tdp == 20
+    g.fps = lambda tdp, *_: min(60.0, 4.0 * tdp)
     at._step()
-    assert not s.paused and not s.no_frames and s.phase == "measure" and not at.status()["no_frames"]
+    assert not s.paused and not s.no_frames and not at.status()["no_frames"]
+    g.run(30)
+    assert s.learned.tdp < 20                                    # it governs from your limit down
     at.pause("manual CPU ceiling")
     s.no_frames = True                                           # even if it had given up before
     at.pause("again")
@@ -1674,9 +1551,9 @@ def test_autotune_takes_over_when_the_first_frames_come_late(fake_hw, monkeypatc
 
 
 def test_autotune_without_a_frame_rate_gives_back_the_limit_you_picked(fake_hw, monkeypatch):
-    """What start() applied stayed on the chip after autotune gave up on a game without a frame rate: a saved result
-    (here 17 W, CPU 90 %, boost, a GPU floor), or a target's mid-range start (22 W of a 35 W pick; Enshrouded,
-    2026-11-12: 30-40 fps instead of 60). Now the pick goes back."""
+    """What start() applied stayed on the chip after autotune gave up on a game without a frame rate: a start under
+    your limit (here the 17 W the game held last time; Enshrouded, 2026-11-12: 22 W of a 35 W pick, 30-40 fps instead
+    of 60). Now the pick goes back. The CPU and GPU levers are the pick's from start to end: Autotune doesn't set them."""
     pw = power.Power(fake_hw)
     chip = {}
     monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: chip.update(tdp=w) or True)
@@ -1684,26 +1561,21 @@ def test_autotune_without_a_frame_rate_gives_back_the_limit_you_picked(fake_hw, 
     monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
     pw.apply_profile("", {"tdp": 35, "cpu_max_pct": 85, "boost": False}, False)       # the pick: Custom 35 W
     at.start("1", {"tdp": 17, "ceiling": 35, "max_fps": 60.0, "cpu_max_pct": 90, "boost": True, "gpu_min_mhz": 1300},
-             8, 35, False)
+             8, 35, False)                                                            # saved by an earlier build
     p = fake_hw.paths
-    assert chip["tdp"] == 17 and sysfs.read_int(p.cpu_max_perf_pct) == 90 and sysfs.read_int(p.cpu_no_turbo) == 0
-    assert sysfs.read_int(p.gpu_min_freq) == 1300
-    at.sampler.sample = lambda: autotune.Sample(t=time.monotonic(), frametime_ms=None, fps=None, gpu_mhz=1500,
-                                                gpu_max_mhz=2400, cpu_pct=40, pkg_w=22.0, gpu_busy=99,
-                                                source="presented", shown_fps=None)
-    for _ in range(autotune.NO_FPS_S):
-        at._step()
+    assert chip["tdp"] == 17 and sysfs.read_int(p.cpu_max_perf_pct) == 85 and sysfs.read_int(p.cpu_no_turbo) == 1
+    assert sysfs.read_int(p.gpu_min_freq) == 300
+    _Game(at, lambda *_: None, gpu_busy=99).run(autotune.NO_FPS_S + 1)
     st = at.status()
     assert st["no_frames"] and st["paused"] and st["tdp"] == 35 and chip["tdp"] == 35
     assert sysfs.read_int(p.cpu_max_perf_pct) == 85 and sysfs.read_int(p.cpu_no_turbo) == 1
-    assert sysfs.read_int(p.gpu_min_freq) == 300
     at.session = None
 
 
 def test_pausing_autotune_gives_back_what_autotune_changed_and_keeps_your_change(fake_hw, monkeypatch):
-    """pause() only set a flag: after Autotune was switched off in a game, or after one manual change, Autotune's own
-    TDP and levers stayed on the chip until the game ended (here 17 W of a 35 W pick, CPU 90 %, boost, a GPU floor).
-    Now the pick goes back, the change made by hand stays, and what Autotune had found is still saved."""
+    """After Autotune was switched off in a game, or after one manual change, its own TDP stayed on the chip until the
+    game ended. Now the pick goes back and the change made by hand stays. The governor never moves the CPU and GPU
+    levers: they stay as the pick set them, whatever an older build saved for the game."""
     pw = power.Power(fake_hw)
     chip = {}
     monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: chip.update(tdp=w) or True)
@@ -1711,20 +1583,18 @@ def test_pausing_autotune_gives_back_what_autotune_changed_and_keeps_your_change
     monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
     pw.apply_profile("", {"tdp": 35, "cpu_max_pct": 85, "boost": False}, False)       # the pick: Custom 35 W
     at.start("1", {"tdp": 17, "ceiling": 35, "max_fps": 60.0, "cpu_max_pct": 90, "boost": True, "gpu_min_mhz": 1300},
-             8, 35, False)
+             8, 35, False)                                            # what an older build saved for the game
     p = fake_hw.paths
-    assert chip["tdp"] == 17 and sysfs.read_int(p.cpu_max_perf_pct) == 90 and sysfs.read_int(p.cpu_no_turbo) == 0
+    assert chip["tdp"] < 35 and sysfs.read_int(p.cpu_max_perf_pct) == 85 and sysfs.read_int(p.cpu_no_turbo) == 1
     at.pause("manual GPU clocks")                                     # main.py: pause(), then the user's write
     pw.set_gpu_window(900, None)
-    assert at.session.paused and chip["tdp"] == 35 and at.status()["tdp"] == 35
-    assert sysfs.read_int(p.cpu_max_perf_pct) == 85 and sysfs.read_int(p.cpu_no_turbo) == 1
-    assert sysfs.read_int(p.gpu_min_freq) == 900                      # yours, not the pick's 300
+    assert at.session.paused and chip["tdp"] == 35 and at.status()["tdp"] == 35 and not pw.governed
+    assert sysfs.read_int(p.gpu_min_freq) == 900                      # yours
     at.pause("manual CPU ceiling")                                    # a second change by hand: the first one stays
     pw.set_cpu_max_pct(70)
     at.pause("autotune switched off")
     assert sysfs.read_int(p.gpu_min_freq) == 900 and sysfs.read_int(p.cpu_max_perf_pct) == 70 and chip["tdp"] == 35
-    found = at.stop(revert=False)["learned"]
-    assert found["tdp"] == 17 and found["cpu_max_pct"] == 90 and found["gpu_min_mhz"] == 1300
+    at.session = None
 
 
 def test_switching_autotune_off_in_a_game_puts_the_pick_back_on_the_chip(plugin):
@@ -1744,10 +1614,6 @@ def test_switching_autotune_off_in_a_game_puts_the_pick_back_on_the_chip(plugin)
 
 
 def test_xemu_from_an_appimage_is_found_though_its_process_is_called_apprun(tmp_path):
-    """In xemu's own AppImage, AppRun is a link to usr/bin/xemu, and a program started through a link has the link's
-    name: the process is "AppRun". The check went by the process name alone, so Autotune governed the game on xemu's
-    60 shown frames: a 60 fps target, the limit down to 8 W (Project Gotham Racing 2, 2026-11-15; the Flatpak's process
-    is "xemu"). Found by the file it runs."""
     def running(comm, exe=None):
         root = tmp_path / f"proc{len(os.listdir(tmp_path))}"
         for pid, c, e in (("1", "systemd", "/usr/lib/systemd/systemd"), ("4000", comm, exe)):
@@ -1776,22 +1642,48 @@ def test_autotune_stays_out_of_xemu_and_gives_back_the_limit_you_picked(fake_hw,
     monkeypatch.setattr(autotune, "PROC", str(proc))
     pw.apply_profile("", {"tdp": 30}, False)                          # the pick: Custom 30 W
     at.start("3119184808#xbox/Project Gotham Racing 2", {"tdp": 16, "ceiling": 30, "max_fps": 60.0}, 8, 30, False)
-    assert chip["tdp"] == 16                                          # a saved result from before
-    at.sampler.sample = lambda: autotune.Sample(t=time.monotonic(), frametime_ms=16.7, fps=60.0, gpu_mhz=1000,
-                                                gpu_max_mhz=2400, cpu_pct=30, pkg_w=19.0, gpu_busy=40,
-                                                source="presented", shown_fps=None)
-    for _ in range(3):
-        at._step()
+    assert chip["tdp"] == 16                                          # where it ended last time
+    g = _Game(at, lambda *_: 60.0, gpu_mhz=1000, cpu_pct=30, pkg_w=19.0, gpu_busy=40).run(3.2)
     assert at.status()["own_pace"] is None                            # not started yet at 3 s
     _w(str(proc / "4300" / "comm"), "xemu")                           # ES-DE starts it
-    for _ in range(7):
-        at._step()
+    g.run(7)
     st = at.status()
     assert st["own_pace"] == "xemu" and st["paused"] and not st["no_frames"] and chip["tdp"] == 30
-    for _ in range(60):                                               # 60 fps keep coming: nothing changes
-        at._step()
+    g.run(60)                                                         # 60 fps keep coming: nothing changes
     assert chip["tdp"] == 30 and at.session.paused
     assert autotune.own_pace_emulator(str(tmp_path / "missing")) is None
+    at.session = None
+
+
+@pytest.mark.parametrize("after_s", [35, 100, 400])
+@pytest.mark.parametrize("frames_before", [60.0, None])
+def test_xemu_started_at_any_time_in_a_session_gets_the_limit_you_picked(fake_hw, monkeypatch, tmp_path, after_s,
+                                                                         frames_before):
+    """xemu was looked for 3, 10 and 30 s into a session only. Started later (by a launcher that shows no frame for
+    40 s, or from a frontend whose games share its session), it was governed on its 60 shown frames, down to 8 W."""
+    pw = power.Power(fake_hw)
+    chip, notes = {}, []
+    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: chip.update(tdp=w) or True)
+    at = autotune.Autotune(fake_hw, pw, "/nonexistent")
+    monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
+    monkeypatch.setattr(at, "_note", lambda s, text: notes.append(text))
+    proc = tmp_path / "proc"
+    for pid, name in (("1", "systemd"), ("4242", "es-de")):
+        _w(str(proc / pid / "comm"), name)
+    monkeypatch.setattr(autotune, "PROC", str(proc))
+    pw.apply_profile("", {"tdp": 30}, False)                          # the pick: Custom 30 W
+    at.start("3119184808#xbox/Project Gotham Racing 2", None, 8, 30, False)
+    frames = {"fps": frames_before}
+    g = _Game(at, lambda *_: frames["fps"], gpu_mhz=1000, cpu_pct=30, pkg_w=19.0, gpu_busy=40).run(after_s)
+    assert at.status()["own_pace"] is None and (chip["tdp"] < 30 if frames_before else at.session.no_frames)
+    _w(str(proc / "4300" / "comm"), "xemu")                           # now the emulator starts and shows its 60 fps
+    frames["fps"], n = 60.0, len(notes)
+    g.run(autotune.OWN_PACE_CHECK_S + 1)
+    st = at.status()
+    assert st["own_pace"] == "xemu" and st["paused"] and chip["tdp"] == 30 and not pw.governed
+    assert not [x for x in notes[n:] if "takes over" in x]            # its frames are never taken for a game's
+    g.run(120)
+    assert chip["tdp"] == 30 and not pw.governed
     at.session = None
 
 
@@ -1870,15 +1762,78 @@ def test_a_sample_from_the_games_own_mangohud_log_has_no_frame_times(fake_hw, tm
     assert smp.frames_ms == []
 
 
+def test_autotune_csv_says_why_the_limit_moved(fake_hw, tmp_path, monkeypatch):
+    """A row of the log has the goal and, in "note", what was decided since the row before: each change of the limit
+    with its watts and reason, and a pause. Without it a run on a device shows that the limit moved and not why."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    at.csv_log = str(tmp_path / "autotune.csv")
+    g = _Game(at, lambda *_: 60.0)                               # 60 fps at any limit: down to the floor
+    g.run(120)
+    at.pause("manual CPU boost")
+    g.run(3)
+    at.session = None
+    rows = [dict(zip(autotune.CSV_FIELDS, r)) for r in csv.reader(open(at.csv_log))][1:]
+    notes = [r["note"] for r in rows if r["note"]]
+    moved = [n for n in notes if " W: " in n]
+    assert moved and all(n.split(" W: ")[0].lstrip("+-").isdigit() for n in moved)       # "-2 W: <why>"
+    assert any(r["goal"] == "57.0" for r in rows)                                       # 60 fps less 5 %
+    assert notes[-1].startswith("paused: manual CPU boost") and rows[-1]["goal"] == ""
+    assert any(n.startswith("holding at") for n in notes)                               # a decision without a write
+    assert len(notes) < len(rows) / 2                                                    # a note once, not every row
+    assert s.notes == []
+
+
+def test_a_row_of_autotune_csv_has_every_frame_since_the_row_before(fake_hw, tmp_path, monkeypatch):
+    """Autotune looks twice a second, ten times while it watches a write, and logs once a second: a row had the frames
+    of its one look (58 of about 118 while holding, 10 while watching), so half the frames or more were in no row."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    at.csv_log = str(tmp_path / "autotune.csv")
+    g = _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp))                            # 60 fps from 15 W: steps down from 19
+    whole, given = g.sample, []
+
+    def with_frames():
+        smp = whole()
+        at.sampler.frames_ms = [1000.0 / smp.fps] * round(smp.fps * s.look_s)      # this look's, as mangoapp's log has them
+        given.append(len(at.sampler.frames_ms))
+        return smp
+    at.sampler.sample = with_frames
+    g.run(40)
+    at.session = None
+    rows = [dict(zip(autotune.CSV_FIELDS, r)) for r in csv.reader(open(at.csv_log))][1:]
+    frames = [int(r["frames"]) for r in rows]
+    assert {r["phase"] for r in rows} >= {"hold", "probe"}                         # both look periods were in it
+    assert sum(frames) >= sum(given) - 60 and min(frames[1:]) >= 40               # all of them, a second's worth a row
+    assert all(abs(float(r["fps"]) - 60.0) < 8 for r in rows[1:] if r["phase"] == "hold")
+
+
+def test_a_rows_slow_frames_are_slow_against_the_pace_before_the_row(fake_hw, tmp_path, monkeypatch):
+    """A second in which every frame takes 25 ms after seconds of 16.7 ms: all of its frames are slow (against the
+    row's own median none would be, and a frame rate that fell would show no slow frames at all)."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    at.csv_log = str(tmp_path / "autotune.csv")
+    g = _Game(at, lambda *_: 60.0)
+    whole, ms = g.sample, [1000.0 / 60]
+
+    def with_frames():
+        smp = whole()
+        at.sampler.frames_ms = [ms[0]] * round(s.look_s * 1000.0 / ms[0])
+        return smp
+    at.sampler.sample = with_frames
+    g.run(3)
+    ms[0] = 25.0
+    g.run(1.5)
+    at.session = None
+    rows = [dict(zip(autotune.CSV_FIELDS, r)) for r in csv.reader(open(at.csv_log))][1:]
+    assert {r["slow_pct"] for r in rows if r["ft_p95"] == "16.67"} == {"0.0"}
+    assert [r["slow_pct"] for r in rows if r["ft_median"] == "25.0"][0] == "100.0"
+
+
 def test_autotune_csv_gets_the_frame_time_columns_and_an_older_log_is_set_aside(fake_hw, tmp_path, monkeypatch):
     log = tmp_path / "autotune.csv"
     old = "time,appid,phase,fps,shown_fps,source,gpu_mhz,gpu_max_mhz,cpu_pct,pkg_w,tdp,cpu_max_pct,gpu_min_mhz,boost,bound,max_fps\n1.0,7,hold,60.0,60.0,presented,,,,,20,100,,1,balanced,60.0\n"
     log.write_text(old)
-    pw = power.Power(fake_hw)
-    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: True)
-    at = autotune.Autotune(fake_hw, pw, log_dir="/nonexistent", csv_log=str(log))
-    at.session = autotune.Session(appid="1", floor_tdp=8, ceiling_tdp=20, settle=1, learned=autotune.Learned(tdp=20))
-    monkeypatch.setattr(autotune, "own_pace_emulator", lambda proc=None: None)
+    at, _s = _tuner(fake_hw, monkeypatch)
+    pw, at.csv_log = at.power, str(log)
     at.sampler.sample = lambda: autotune.Sample(t=5.0, frametime_ms=33.67, fps=29.7, gpu_mhz=None, gpu_max_mhz=None,
                                                 cpu_pct=None, pkg_w=15.0, shown_fps=29.7, frames=30, ft_median=33.3,
                                                 ft_p95=38.04, slow_pct=6.667)
@@ -1889,15 +1844,322 @@ def test_autotune_csv_gets_the_frame_time_columns_and_an_older_log_is_set_aside(
     at.session = None
     assert (tmp_path / "autotune.csv.1").read_text() == old            # the earlier build's rows, whole
     rows = log.read_text().splitlines()
-    assert rows[0] == ",".join(autotune.CSV_FIELDS) and rows[0].endswith(",max_fps,frames,ft_median,ft_p95,slow_pct")
-    assert rows[1].endswith(",30,33.3,38.04,6.7") and rows[2].endswith(",,,,") and len(rows) == 3
+    assert rows[0] == ",".join(autotune.CSV_FIELDS)
+    assert rows[0].endswith(",max_fps,frames,ft_median,ft_p95,slow_pct,goal,mult,look_s,note")
+    cols = [dict(zip(autotune.CSV_FIELDS, r)) for r in csv.reader(rows[1:])]
+    assert [cols[0][k] for k in ("frames", "ft_median", "ft_p95", "slow_pct")] == ["30", "33.3", "38.04", "6.7"]
+    assert [cols[1][k] for k in ("frames", "ft_median", "ft_p95", "slow_pct")] == ["", "", "", ""] and len(rows) == 3
     # the same columns the next time: the log goes on
-    at2 = autotune.Autotune(fake_hw, pw, log_dir="/nonexistent", csv_log=str(log))
-    at2.session = autotune.Session(appid="1", floor_tdp=8, ceiling_tdp=20, settle=1, learned=autotune.Learned(tdp=20))
-    at2.sampler.sample = at.sampler.sample
+    at2, _s = _tuner(fake_hw, monkeypatch)
+    at2.csv_log = str(log)
+    at2.sampler.sample = lambda: autotune.Sample(t=7.5, frametime_ms=16.7, fps=60.0, gpu_mhz=None, gpu_max_mhz=None,
+                                                 cpu_pct=None, pkg_w=15.0, shown_fps=60.0)
     at2._step()
     at2.session = None
     assert len(log.read_text().splitlines()) == 4 and (tmp_path / "autotune.csv.1").read_text() == old
+
+
+def test_a_look_without_a_new_mangoapp_row_has_no_frames_not_the_other_logs_average(fake_hw, tmp_path, monkeypatch):
+    """A game with the launch wrapper has both logs. One look without a new mangoapp row (a 0.6 s stall) fell through
+    to the MangoHud log and got the average of every second it had written so far as "this look's frames": 42.8 fps
+    in a 60 fps game, and the full limit for it (review, 2026-11-15)."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(autotune, "mangoapp_command", lambda c: True)
+    logs = tmp_path / "mangohud"
+    logs.mkdir()
+    own = logs / "game_2026-11-15_14-00-00.csv"
+    own.write_text("os\nLinux\nfps,frametime\n" + "30.0,33.3\n" * 40)          # 40 s of a slow start, never read
+    live = tmp_path / "mangoapp_2026-11-15_14-00-01.csv"
+    _mango_rows(live, [16.7] * 3, header=True)
+    smp = autotune.Sampler(fake_hw, str(logs), home=str(tmp_path))
+    smp.set_prefix(None)
+    smp.frametime()                                                       # finds both logs
+    _mango_rows(live, [16.7] * 30)
+    clock["t"] += 0.5
+    assert smp.frametime() == (pytest.approx(16.7), pytest.approx(59.9, abs=0.1))
+    clock["t"] += 0.5
+    assert smp.frametime() == (None, None) and smp.frames_ms == []       # a stall: no frames, not 30 fps
+    with open(own, "a") as f:                                             # the own log goes on meanwhile (a slow second)
+        f.write("30.0,33.3\n")
+    _mango_rows(live, [16.7] * 30)
+    clock["t"] += 0.5
+    assert smp.frametime()[1] == pytest.approx(59.9, abs=0.1)
+    with open(own, "a") as f:
+        f.write("30.0,33.3\n")
+    clock["t"] += 0.5
+    smp._log_checked = -1e9
+    assert smp.frametime() == (None, None)                                # the next stall: still not the other log's rows
+    clock["t"] += autotune.MANGOAPP_RELOG_S + 1                           # mangoapp gone for good: the other log,
+    smp._log_checked = -1e9                                               # from here on only (not the two slow
+    assert smp.frametime() == (None, None)                                # seconds it wrote meanwhile)
+    with open(own, "a") as f:
+        f.write("60.0,16.7\n")
+    clock["t"] += 1.0
+    assert smp.frametime() == (16.7, 60.0)
+
+
+def test_the_frame_generation_multiplier_is_a_whole_number_that_changes_rarely(fake_hw, monkeypatch):
+    """XeLL writes its figure once per 100 rendered frames. Shown fps of this look over that line stood still between
+    two lines, times every frame: the governor saw a constant rate and no loss at all (review, 2026-11-15)."""
+    at, s = _tuner(fake_hw, monkeypatch, tdp=20)
+    seen = []
+
+    def look(t, shown_fps, xell):
+        at.sampler._xell = xell
+        at.sampler.frames_ms = [1000.0 / shown_fps] * int(shown_fps / 2)
+        smp = autotune.Sample(t=t, frametime_ms=1000.0 / xell[1], fps=xell[1], gpu_mhz=None, gpu_max_mhz=None, cpu_pct=None,
+                              pkg_w=20.0, shown_fps=shown_fps, source="rendered")
+        seen.append(at._multiplier(s, smp))
+    for i in range(8):                                   # 2x frame generation: 120 shown, 60 rendered, a line each 1.5 s
+        look(1.0 + i * 0.5, 120.0, (1.0 + (i // 3) * 1.5, 60.0))
+    assert seen[-1] == 2.0
+    for i in range(3):                                   # the game slows down between two lines: 90 shown, the line says 60
+        look(5.0 + i * 0.5, 90.0, (4.0, 60.0))
+    assert seen[-3:] == [2.0, 2.0, 2.0]                  # 90 / 2 = 45 rendered: the governor sees the loss
+    for i in range(4):                                   # one line that fits its shown frames badly (170 over 60 is 3x):
+        look(6.5 + i * 0.5, 170.0, (5.5 + (i // 3) * 1.5, 60.0))
+    assert seen[-1] == 2.0 and round(s.mult_hist[-1]) == 3   # the median of the last five, not the last
+    before = list(s.mult_hist)
+    at.sampler._xell, at.sampler.frames_ms = (7.2, 60.0), [1000.0 / 300.0] * 4   # a line 4 shown frames after the last:
+    assert at._multiplier(s, autotune.Sample(t=8.5, frametime_ms=16.7, fps=60.0, gpu_mhz=None, gpu_max_mhz=None, cpu_pct=None,
+                                             pkg_w=20.0, shown_fps=300.0, source="rendered")) == 2.0
+    assert list(s.mult_hist) == before                   # too few frames for a quotient (300 over 60 would be 5x)
+    at.sampler._xell = None
+    s.fg = 3                                             # no XeLL: ClawDeck's own multiplier for the game
+    assert at._multiplier(s, autotune.Sample(t=9.0, frametime_ms=16.7, fps=60.0, gpu_mhz=None, gpu_max_mhz=None, cpu_pct=None,
+                                             pkg_w=20.0, shown_fps=60.0)) == 3.0
+    at.session = None
+
+
+def test_a_new_target_leaves_xemu_alone_and_hands_control_back_after_a_change_by_hand(fake_hw, monkeypatch, tmp_path):
+    t = _with_tau(fake_hw, tmp_path)
+    at, s = _tuner(fake_hw, monkeypatch, tdp=14)
+    s.own_pace, s.paused = "xemu", True
+    at._give_back(s)
+    at._tau(s, False)
+    at.enabled = True
+    at.set_target(60)
+    assert s.paused and s.learned.tdp == 20 and s.user_target == 60       # the target is kept for when it governs
+    assert sysfs.read_int(t) == TAU_FW and not s.short_tau                # ... and the chip's window stays the firmware's
+    _Game(at, lambda *_: 60.0).run(30)
+    assert s.learned.tdp == 20 and not at.power.governed                  # your limit, for as long as xemu runs
+    at.session = None
+    for why, on, back in (("manual CPU ceiling", True, True), ("manual GPU clocks", True, True),
+                          ("autotune switched off", False, False), ("autotune switched off", True, True)):
+        at, s = _tuner(fake_hw, monkeypatch, tdp=14)
+        at.pause(why)
+        assert s.paused and s.learned.tdp == 20 and not at.power.governed
+        at.enabled = on                                                    # the Autotune switch (off, or on again)
+        at.set_target(30)
+        assert s.paused is not back and at.power.governed is back and s.user_target == 30, (why, on)
+        assert s.learned.tdp == 20                                         # from the limit in use
+        at.session = None
+
+
+@pytest.mark.parametrize("why, off_and_on", [("manual CPU ceiling", False), ("autotune switched off", True)])
+@pytest.mark.parametrize("frames_again", [False, True])
+def test_a_new_target_after_a_give_up_for_no_frames_governs_only_when_frames_came(fake_hw, monkeypatch, why, off_and_on,
+                                                                                  frames_again):
+    """The change by hand comes after the give-up and takes "no frames" off the session (frames later must not undo
+    it): a new target then handed control back to a game without a frame rate."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=20)
+    at.enabled = True
+    g = _Game(at, lambda *_: None).run(autotune.NO_FPS_S + 5)
+    assert s.paused and s.no_frames and not at.power.governed
+    at.enabled = not off_and_on
+    at.pause(why)
+    at.enabled = True
+    if frames_again:
+        g.fps = lambda *_: 60.0
+        g.run(2)
+        assert s.paused and not at.power.governed                          # yours stays yours
+    at.set_target(30)
+    assert s.paused is not frames_again and at.power.governed is frames_again
+    at.session = None
+
+
+def test_the_guard_is_told_the_limit_autotune_holds_and_its_release_reaches_a_paused_game(fake_hw, monkeypatch):
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, tdp=17)
+    g = _Game(at, lambda tdp, *_: 2.0 * tdp).run(4)
+    s.gov.mode, s.gov.prev, s.learned.tdp = "check", 17, 30               # its second at the full limit
+    assert at.held_w() == 17                                             # ... is not what it holds (a guard check then
+    s.gov.mode = "hold"                                                  # took a real overload for a hot spot)
+    s.learned.tdp = 17
+    assert at.held_w() == 17
+    at.pause("manual change")
+    assert s.learned.tdp == 30
+    assert at.thermal_step(24) and s.learned.tdp == 24
+    assert at.thermal_release(26) and s.learned.tdp == 26                # nobody governs: the watts go on the chip
+    assert at.thermal_release(30) and s.learned.tdp == 30 and s.thermal_cap is None
+    at.session = None
+
+
+def test_a_refused_write_is_tried_again_later_not_ten_times_a_second(fake_hw, monkeypatch, caplog):
+    at, s = _tuner(fake_hw, monkeypatch, tdp=16)
+    tries = []
+    monkeypatch.setattr(at.power, "set_tdp", lambda w, plugged=None: tries.append(w) and False)   # e.g. HHD's TDP controls off
+    g = _Game(at, lambda *_: 40.0)                                           # under the target: it wants the full limit
+    s.user_target, s.cfg.target = 60, 60.0
+    with caplog.at_level("WARNING", logger="clawdeck.autotune"):
+        g.run(20)
+    assert s.learned.tdp == 16 and s.gov.limit == 16 and s.look_s == 1.0     # resting, a look a second
+    assert s.gov.mode == "hold" and not s.gov.retest                         # ... with no write of the governor's watched
+    assert len([r for r in caplog.records if "not applied" in r.getMessage()]) == 1
+    assert len(tries) <= 2                                                   # once, and not again within REFUSED_S
+    g.run(autotune.REFUSED_S + 5)
+    assert 2 <= len(tries) <= 4                                              # ... and again after it
+    at.session = None
+
+
+def test_a_refused_write_ends_the_watch_it_came_in(fake_hw, monkeypatch):
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    g = _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(6)                # 60 fps from 15 W
+    assert s.gov.mode == "probe" and s.gov.before                             # a step down is being watched
+    monkeypatch.setattr(at.power, "set_tdp", lambda w, plugged=None: False)
+    g.run(8)                                                                  # it holds; the next step is refused
+    assert s.refused and s.gov.mode == "hold" and s.gov.before is None
+    at.session = None
+
+
+def test_a_log_with_a_row_a_second_gives_the_governor_whole_seconds_of_frames(fake_hw, monkeypatch):
+    """Only the game's own MangoHud log (mangoapp silent): a row a second, two looks a second. Each row was handed on
+    as half a second of frames and the look in between as none: a frame rate with holes, never "steady", so Autotune
+    never stepped down on such a log (19 W for a game that needs 8; review, 2026-11-15)."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    g = _Game(at, lambda tdp, *_: min(60.0, 7.5 * tdp))                       # 60 fps from 8 W
+    whole, look = g.sample, {"n": 0}
+
+    def every_other():
+        smp = whole()
+        look["n"] += 1
+        if look["n"] % 2:                                                     # no new row in this look
+            smp.fps = smp.shown_fps = smp.frametime_ms = None
+        return smp
+    at.sampler.sample = every_other
+    start = s.learned.tdp
+    g.run(4)
+    assert len(s.gov.recent) >= 0.9 * 60 * 3 and not s.no_frames              # about 60 frames a second arrived
+    g.run(60)
+    assert s.learned.tdp <= 10 < start and not s.paused
+    at.session = None
+
+
+
+def test_a_pl2_change_while_autotune_governs_keeps_the_session_and_what_it_learned(plugin):
+    p = plugin
+    p.run(p.set_tdp(26))
+    p.run(p.game_started("7"))
+    s = _lower(p)
+    was = (s.learned.tdp, p.chip(), dict(s.gov.held_s))
+    assert s.learned.tdp < 26
+    for args in ((True, 45), (True, 30), (False, None), (True, 45)):   # a restart at the full limit dropped it all
+        r = p.run(p.set_pl2(*args))
+        assert r["ok"] and p.autotune.session is s and not s.paused and p.power.governed, args
+        assert (s.learned.tdp, p.chip(), dict(s.gov.held_s)) == was, args
+
+
+@pytest.mark.parametrize("pct, turbo_off, gpu_min", [(100, 0, 300), (70, 1, 800), (55, 0, 1300)])
+def test_the_levers_in_the_log_are_what_the_chip_has_not_what_an_old_record_said(fake_hw, monkeypatch, pct, turbo_off, gpu_min):
+    sysfs.write(fake_hw.paths.cpu_max_perf_pct, pct, persist=True)
+    sysfs.write(fake_hw.paths.cpu_no_turbo, turbo_off, persist=True)
+    sysfs.write(fake_hw.paths.gpu_min_freq, gpu_min, persist=True)
+    for old in ({"cpu_max_pct": 85, "gpu_min_mhz": 1000, "boost": False}, {"cpu_max_pct": 100, "gpu_min_mhz": None, "boost": True}):
+        at, s = _tuner(fake_hw, monkeypatch, tdp=14, **old)
+        l = s.learned
+        assert (l.cpu_max_pct, l.gpu_min_mhz, l.boost) == (pct, gpu_min, not turbo_off), old
+        assert sysfs.read_int(fake_hw.paths.cpu_max_perf_pct) == pct and sysfs.read_int(fake_hw.paths.gpu_min_freq) == gpu_min
+        at.session = None
+
+
+def test_set_pl2_says_what_the_chip_has_while_autotune_governs(plugin):
+    p = plugin
+    p.run(p.set_tdp(26))
+    p.run(p.game_started("7"))
+    _lower(p)
+    r = p.run(p.set_pl2(True, 45))
+    pl1 = sysfs.read_int(p.power.p.rapl_pl1) // 1_000_000
+    assert r["ok"] and p.power.governed and r["read_w"] == pl1 + 2
+    assert r["summary"] == f"PL2 {pl1 + 2} W (PL1 + 2 W while Autotune governs this game; your 45 W applies when it doesn't)"
+
+
+def test_what_the_guard_and_the_panel_set_reaches_the_governor(fake_hw, monkeypatch):
+    """The wiring between the plugin and governor.step: the guard's cap and its clock cap are in every observation, a
+    target set in the panel is in the configuration, the guard's step ends a watch, no write goes over the cap, a
+    change of the frame-generation multiplier starts the governor's memory over, and stop() ends "governed"."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    chip = {}
+    monkeypatch.setattr(at.power, "set_tdp", lambda w, plugged=None: chip.update(tdp=w) or True)
+    seen, real = [], autotune.governor.step
+    monkeypatch.setattr(autotune.governor, "step", lambda st, obs, cfg: seen.append((obs, cfg)) or real(st, obs, cfg))
+    g = _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp))                       # 60 fps from 15 W
+    g.run(6)
+    assert s.gov.mode == "probe"                                              # a step down is being watched
+    assert at.thermal_step(17) and s.gov.mode == "hold" and chip["tdp"] <= 17  # the guard's step ends the watch
+    assert s.gov.before is None                                               # ... with nothing of it left behind
+    g.run(1)
+    assert seen[-1][0].cap_w == 17 and seen[-1][0].thermal is False
+    assert not at._tdp(s.learned, 25) or chip["tdp"] <= 17                    # nothing over the cap
+    assert chip["tdp"] <= 17
+    at.thermal_clock(80)
+    g.run(1)
+    assert seen[-1][0].thermal is True
+    at.set_target(45, False)
+    g.run(1)
+    assert (seen[-1][1].target, seen[-1][1].auto_fps) == (45.0, False)
+    s.gov.fail[11], s.gov.lo, s.gov.hi, s.gov.ratio = [1e12, 1, None, False, 0.0], 55.0, 56.0, 0.97
+    s.fg = 2                                                                  # frame generation switched on in the game
+    g.run(1)
+    assert seen[-1][0].multiplier == 2.0 and s.gov.fail == {} and s.gov.lo is None and s.gov.ratio is None
+    assert at.power.governed
+    at.stop(revert=False)
+    assert not at.power.governed
+
+
+def test_a_manual_cpu_ceiling_pauses_autotune_and_the_guard_gets_the_limit_it_holds(plugin, tmp_path):
+    p = plugin
+    p.run(p.set_tdp(30))
+    p.run(p.game_started("7"))
+    s = _lower(p)
+    held = p.chip()
+    assert held < 30
+    # Autotune looks at the full limit for a second: the guard must judge the limit it holds, not that second's 30 W
+    s.gov.mode, s.gov.prev = "check", held
+    p.autotune._tdp(s.learned, 30)
+    t = tmp_path / "pkg_temp"
+    p.guard = thermal.Guard(str(t), "x86_pkg_temp")
+    _w(t, 97000)
+    assert p.run(p._guard_check()) == held - 2                                # 2 W under what it holds (not 28 W)
+    r = p.run(p.set_cpu_max_pct(80))
+    assert r["ok"] and s.paused
+
+
+def test_frames_that_stop_for_good_give_the_limit_you_picked_back(fake_hw, monkeypatch):
+    """The frame log stops in the middle of a game (mangoapp's logging switched off and not coming back): the governor
+    is blind. After NO_FPS_S without a frame the pick goes back, as for a game that never showed a frame; frames
+    coming back hand the game to Autotune again."""
+    pw = power.Power(fake_hw)
+    chip = {}
+    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: chip.update(tdp=w) or True)
+    monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
+    monkeypatch.setattr(autotune, "own_pace_emulator", lambda proc=None: None)
+    at = autotune.Autotune(fake_hw, pw, log_dir="/nonexistent", csv_log=None)
+    at.start("1", None, 8, 30, False, target=60)
+    s = at.session
+    g = _Game(at, lambda tdp, *_: min(60.0, 4.0 * tdp))                       # 60 fps from 15 W
+    g.run(90)
+    low = chip["tdp"]
+    assert low <= 17 and not s.paused
+    frames, g.fps = g.fps, lambda *_: None                                    # the log stops
+    g.run(autotune.NO_FPS_S - 3)
+    assert chip["tdp"] == low and not s.paused                                # a long loading screen is not it yet
+    g.run(6)
+    st = at.status()
+    assert chip["tdp"] == 30 and st["paused"] and st["no_frames"] and not pw.governed
+    g.fps = frames                                                            # frames again
+    g.run(60)
+    assert not s.paused and not s.no_frames and chip["tdp"] < 30
+    at.session = None
 
 
 def test_sampler_turns_mangoapps_log_on_and_off_and_asks_again_when_it_stops(fake_hw, tmp_path, monkeypatch):
@@ -1953,7 +2215,7 @@ def test_mangoapp_log_goes_off_when_the_game_stops_not_at_an_es_de_switch(plugin
     assert calls == ["release"]
 
 
-def test_sampler_prefers_the_games_own_mangohud_log(fake_hw, tmp_path, monkeypatch):
+def test_sampler_reads_the_games_own_mangohud_log_only_while_mangoapp_gives_nothing(fake_hw, tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(autotune, "mangoapp_command", lambda c: sent.append(c) or True)
     logs = tmp_path / "mangohud"
@@ -1964,7 +2226,11 @@ def test_sampler_prefers_the_games_own_mangohud_log(fake_hw, tmp_path, monkeypat
     assert sent == ["logging=1"]
     (logs / "game_2026-11-15_00-11-00.csv").write_text("os\nLinux\nfps,frametime\n60.0,16.6\n")
     smp._log_checked = -1e9
-    assert smp.frametime() == (16.6, 60.0) and sent == ["logging=1", "logging=0"]
+    assert smp.frametime() == (16.6, 60.0) and smp.frames_ms == [] and sent == ["logging=1"]   # mangoapp's stays on
+    _mango_rows(tmp_path / "mangoapp_2026-11-15_00-11-02.csv", [20.0] * 5, header=True)
+    smp._mango_checked = -1e9
+    ft, fps = smp.frametime()
+    assert (ft, fps) == (20.0, 50.0) and smp.frames_ms == [20.0] * 5                           # every frame, from now on
 
 
 def test_game_list_tags_say_what_clawdecks_optiscaler_runs(plugin):
@@ -2098,497 +2364,34 @@ def m_runtime(p):
     return p._vrr_live_again.__func__.__globals__["RUNTIME_DIR"]
 
 
-def _target_tuner(fake_hw, monkeypatch, target, ceiling=25):
+def _target_tuner(fake_hw, monkeypatch, target, auto_fps=True, ceiling=25):
     at, s = _tuner(fake_hw, monkeypatch, ceiling=ceiling)
     clock = {"t": 1000.0}
     monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
-    at._start_target(s, target)
-    seen = {"tdp": [], "fps": []}
+    at._start_target(s, {}, target, auto_fps)
 
     def run(n):
         for _ in range(n):
             clock["t"] += 1
             at._step()
-            seen["tdp"].append(s.learned.tdp)
-            if s.history and s.history[-1].fps:
-                seen["fps"].append(s.history[-1].fps)
-    run.seen = seen
     return at, s, run
-
-
-class _BusyGame(_Game):
-    """A game whose frames follow watts up to a cap (a frame limit or the engine's): the GPU is ~99 % busy while the
-    power holds it back, and has headroom (busy_capped) once the cap holds it."""
-    def __init__(self, at, per_w, cap=999.0, busy_capped=70, **smp):
-        super().__init__(at, lambda tdp, *_: min(self.cap, self.per_w * tdp), **smp)
-        self.per_w, self.cap, self.busy_capped = per_w, cap, busy_capped
-
-    def sample(self):
-        smp = super().sample()
-        smp.gpu_busy = self.busy_capped if self.per_w * self.at.session.learned.tdp > self.cap * 1.04 else 99
-        return smp
-
-
-def test_target_holds_the_target_with_the_fewest_watts(fake_hw, monkeypatch):
-    """From the set TDP: watts come off only while the lowest 3 s average is 20 % over the target, to the watts aimed at
-    10 % over it. A heavier scene still at the target keeps the watts; one under it gets watts at once, aimed at 10 %
-    over (user, 2026-11-14: 50 fps at 20 W for a 60 target has to get more watts)."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60)
-    game = _BusyGame(at, 4.0, cap=90.0)
-    assert s.learned.tdp == 25                                   # your TDP, not mid-range
-    run(300)
-    assert s.learned.tdp == 17 and s.phase == "target"          # 68 fps at 17 W: no more 20 % over
-    assert min(run.seen["fps"]) >= 60 and at.status()["saves_w"] == 8
-    game.per_w = 3.4                                             # heavier: 57.8 fps at 17 W, under 5 % short
-    run(60)
-    assert s.learned.tdp == 17
-    game.per_w = 2.9                                             # 49 fps at 17 W: under
-    run(2)
-    assert s.learned.tdp == 19 and "back to 19 W" in s.last_action   # at once: 17 W came from a step down
-    run(6)
-    assert s.learned.tdp == 23 and "under 60" in s.last_action   # 55 at 19 W: to what gives 66
-    at.session = None
-
-def test_target_with_a_frame_limit_at_the_target_lowers_while_the_gpu_has_headroom(fake_hw, monkeypatch):
-    """Steam's frame limit at the target pins fps there, so the fps can't show spare watts: with the GPU not maxed, steps
-    of 1, 2, 4, 6 W while the target holds, back and 1 W at a time after the one that ends under, and it stops where the
-    GPU gets busy. 1 W every 12 s took 3.5 minutes from 30 to 12 W (user: "it needs to be more responsive")."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    _BusyGame(at, 5.0, cap=60.0)                                 # 12 W gives 60
-    run(400)
-    assert s.learned.tdp == 12 and run.seen["tdp"].index(12) < 130   # 18 steps of 12 s took 216 s
-    assert len([f for f in run.seen["fps"] if f < 60 * (1 - autotune.G_TOL)]) <= 2   # one step too far: 2 s under
-    changes = s.last_change_at
-    run(240)
-    assert s.learned.tdp == 12 and s.last_change_at == changes   # the GPU is busy at 12 W
-    at.session = None
-
-def test_a_new_target_leaves_xemu_alone(fake_hw, monkeypatch, tmp_path):
-    """set_target() ended every pause, also the one for xemu: Autotune governed the game again on xemu's 60 presented
-    fps and took the TDP from the 30 W pick to the 8 W floor within two minutes."""
-    pw = power.Power(fake_hw)
-    chip = {}
-    monkeypatch.setattr(pw, "set_tdp", lambda w, plugged=None: chip.update(tdp=w) or True)
-    at = autotune.Autotune(fake_hw, pw, "/nonexistent")
-    monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
-    clock = {"t": 1000.0}
-    monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
-    proc = tmp_path / "proc"
-    for pid, name in (("1", "systemd"), ("4242", "es-de"), ("4300", "xemu")):
-        _w(str(proc / pid / "comm"), name)
-    monkeypatch.setattr(autotune, "PROC", str(proc))
-    pw.apply_profile("", {"tdp": 30}, False)                          # the pick: Custom 30 W
-    at.start("3119184808#xbox/Project Gotham Racing 2", None, 8, 30, False, target=60)
-    at.sampler.sample = lambda: autotune.Sample(t=clock["t"], frametime_ms=16.7, fps=60.0, gpu_mhz=1000,
-                                                gpu_max_mhz=2400, cpu_pct=30, pkg_w=19.0, gpu_busy=40,
-                                                source="presented", shown_fps=None)
-
-    def run(n):
-        for _ in range(n):
-            clock["t"] += 1
-            at._step()
-    run(10)
-    assert at.status()["own_pace"] == "xemu" and at.session.paused and chip["tdp"] == 30
-    at.set_target(30)                                                 # a new target in the panel
-    run(120)
-    st = at.status()
-    assert st["own_pace"] == "xemu" and st["paused"] and chip["tdp"] == 30
-    at.set_target(None)                                               # the target switched off: the same
-    run(120)
-    assert at.session.paused and chip["tdp"] == 30
-    at.session = None
-
-
-def test_target_a_step_down_that_misses_goes_back_and_waits_before_trying_again(fake_hw, monkeypatch):
-    """No floor: a step down that ends under the target goes straight back. After a 2 W step it goes on 1 W at a time;
-    after a 1 W step nothing goes under that TDP for G_HOLD_S, then it tries again (the scene may be lighter), and each
-    further under there doubles the wait. Without a wait a locked game would drop under its lock every half minute; a
-    10 minute one kept a PS3 game at 30 W through a light area (user: "it needs to be more responsive")."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
-    _Game(at, lambda tdp, *_: 66.0 if tdp >= 18 else 50.0, gpu_busy=50)   # held at 66 from 18 W, 50 under it
-    run(30)
-    assert s.learned.tdp == 19 and "back to 19 W" in s.last_action and " for " not in s.last_action   # 2 W too far
-    run(25)
-    assert s.learned.tdp == 18 and "back to 18 W for 60 s" in s.last_action   # 1 W too far
-    mark = len(run.seen["tdp"])
-    run(autotune.G_HOLD_S - 5)
-    assert 17 not in run.seen["tdp"][mark:]                      # not again within the wait
-    run(20)
-    assert 17 in run.seen["tdp"][mark:] and "back to 18 W for 2 min" in s.last_action   # tried again: twice the wait
-    mark = len(run.seen["tdp"])
-    run(2 * autotune.G_HOLD_S - 25)
-    assert 17 not in run.seen["tdp"][mark:]
-    at.session = None
-
-def test_target_a_demanding_game_keeps_its_watts(fake_hw, monkeypatch):
-    """Enshrouded, 2026-11-14: 60 fps target, ~66 fps at 30 W in calm scenes and ~57 in heavy ones, GPU 99 % busy. It
-    was cut to 27-29 W six times in 8 minutes. 66 is not 20 % over, and the GPU is maxed: no step down; 57 at the full
-    TDP can't get more. A much lighter area, 20 % over, saves watts."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    t0, scene = autotune.time.monotonic(), {"calm": 66.0}
-    heavy = lambda: (autotune.time.monotonic() - t0) % 120 >= 90          # 90 s calm, 30 s heavy, over and over
-    _Game(at, lambda tdp, *_: (57.0 if heavy() else scene["calm"]) * tdp / 30, gpu_busy=99)
-    run(700)
-    assert set(run.seen["tdp"]) == {30}                                   # six heavy scenes, no cut
-    scene["calm"], heavy = 80.0, lambda: False                            # a much lighter area from here on
-    run(60)
-    assert s.learned.tdp == 25 and min(run.seen["fps"][-20:]) >= 60      # 80 fps at 30 W: to what gives ~66
-
-def test_target_holds_a_games_own_frame_cap_with_the_fewest_watts(fake_hw, monkeypatch):
-    """A PS3 game locked at 30 fps, target 60 (maintainer, 2026-11-14): under the band at the full TDP, steady, GPU
-    idle part of the time. More watts can't raise it, so its own lock takes the target's place, held with the fewest
-    watts instead of the full TDP for the whole session."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    _BusyGame(at, 3.0, cap=30.0, busy_capped=50)                  # locked at 30 fps; 10 W gives 30
-    t = 0
-    while s.learned.cap is None and t < 60:
-        run(1)
-        t += 1
-    assert s.learned.cap == 30 and t <= 11 and "own cap" in s.last_action   # found at the full TDP in seconds
-    run(400)
-    assert s.learned.tdp == 10                                     # held with 10 W
-    assert len([f for f in run.seen["fps"][30:] if f < 30 * (1 - autotune.G_TOL)]) <= 2   # one step too far: 2 s
-    at.session = None
-
-def test_target_a_frame_cap_with_the_games_own_dips_still_comes_down(fake_hw, monkeypatch):
-    """Midnight Club LA (RPCS3, locked at 30, target 60, 2026-11-14): 29.9-30.2 fps with one 28.6 fps second every
-    13 s, at any TDP. Their 3 s averages stay within 5 % of 30, so the watts come down to what holds 30. A real
-    shortage still gets watts back."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    game = _BusyGame(at, 3.0, cap=30.0, busy_capped=40)          # 10 W holds 30
-    tick = {"n": 0}
-    base = game.fps
-
-    def paced(tdp, *a):
-        tick["n"] += 1
-        f = base(tdp, *a)
-        if f >= 30.0:                                            # locked: the game's own pacing around 30
-            return 28.6 if tick["n"] % 13 == 0 else (29.9, 30.0, 30.2)[tick["n"] % 3]
-        return f
-    game.fps = paced
-    run(30)
-    assert s.learned.cap == 30
-    run(400)
-    assert s.learned.tdp <= 11                                   # down to what holds 30, dips or not
-    game.per_w = 2.0                                             # heavier scene: 10 W now gives 20 fps
-    run(10)
-    assert s.learned.tdp >= 15 and "under 30" in s.last_action
-    run(30)
-    last = run.seen["fps"][-20:]
-    assert min(sum(last[i:i + 3]) / 3 for i in range(18)) >= 30 * (1 - autotune.G_TOL)   # 30 again, its own dips aside
-    at.session = None
-
-def test_target_a_late_under_after_a_step_down_also_goes_back_and_waits(fake_hw, monkeypatch):
-    """Midnight Club LA, 2026-11-14 13:41: stepped from 28 to 27 W, 75 s later an under, 28 W back as a plain raise, and
-    12 s later 27 W again, over and over. An under at a TDP a step down brought it to goes back and waits, whenever it
-    comes; each further under there doubles the wait."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=28)
-    late = {"at": None}
-
-    def fps(tdp, *_):
-        if tdp >= 28:
-            return 30.0
-        if tdp < 27:
-            return 27.0
-        late["at"] = late["at"] or autotune.time.monotonic()
-        return 30.0 if autotune.time.monotonic() - late["at"] < 75 else 27.0   # 27 W holds for 75 s, then not
-    _Game(at, fps, gpu_busy=40)
-    run(700)
-    tries = sum(1 for a, b in zip(run.seen["tdp"], run.seen["tdp"][1:]) if (a, b) == (28, 27))
-    assert tries <= 5 and s.learned.tdp == 28 and "back to 28 W for 8 min" in s.last_action   # 1, 2, 4, 8 min
-    #                                                                     between tries, not 12 s
-    at.session = None
-
-
-def test_target_a_game_steady_just_under_the_target_is_not_a_frame_cap(fake_hw, monkeypatch):
-    """Enshrouded at the full TDP, steady at 59 fps for a 60 target with the GPU busy under 85 % (2026-11-14): within
-    5 % of the target, that holds it; it isn't a lock under it. The GPU isn't maxed, so watts come off while 59 holds."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    _BusyGame(at, 3.0, cap=59.0, busy_capped=80)                  # held at 59 fps by the game, GPU 80 % busy
-    run(400)
-    assert s.learned.cap is None and s.learned.tdp == 20
-    assert len([f for f in run.seen["fps"] if f < 60 * (1 - autotune.G_TOL)]) <= 2   # one step too far: 2 s
-    at.session = None
-
-def test_target_a_frame_cap_lifts_when_the_game_runs_faster(fake_hw, monkeypatch):
-    """The cap goes as soon as the game runs 20 % over it (a menu at 60, the lock removed). A game unlocked while the
-    power alone held it under the old cap is found by the check every RESCAN_S at the full TDP; a cap that still
-    holds there gets its watts back at once."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    game = _BusyGame(at, 3.0, cap=30.0, busy_capped=50)
-    run(430)
-    assert s.learned.cap == 30 and s.learned.tdp == 10
-    game.per_w, game.cap = 4.0, 34.0                              # 13 % over the cap for a while: not 20 %
-    run(30)
-    assert s.learned.cap == 30
-    held = s.learned.tdp
-    run(autotune.RESCAN_S)                                        # the check: still locked at the full TDP
-    assert s.learned.cap == 30 and s.learned.tdp == held and "cap holds" in s.last_action
-    game.per_w, game.cap = 3.0, 90.0                              # unlocked: the power alone holds it now
-    run(autotune.RESCAN_S)
-    assert s.learned.cap is None                                  # the full TDP ran it over the band: the cap is gone
-    run(60)
-    assert s.learned.tdp == 22 and min(run.seen["fps"][-20:]) >= 60   # the target again, with the watts
-    at.session = None
-
-def test_target_a_saved_frame_cap_holds_from_the_next_start(fake_hw, monkeypatch):
-    """The cap is saved with what the game learned: the next start holds it at the saved watts from the first second,
-    instead of going to the full TDP and down again."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    _BusyGame(at, 3.0, cap=30.0, busy_capped=50)
-    run(430)
-    saved = at.stop(revert=False)["learned"]
-    assert saved["cap"] == 30 and saved["tdp"] == 10
-    monkeypatch.setattr(autotune.asyncio, "get_event_loop", lambda: type("L", (), {"create_task": lambda self, c: c.close()})())
-    at.start("1", saved, 8, 10, False, target=60, max_tdp=30)    # main.py: the saved 10 W is the game's TDP now
-    _BusyGame(at, 3.0, cap=30.0, busy_capped=50)
-    seen = []
-    for _ in range(60):
-        run(1)
-        seen.append(at.session.learned.tdp)
-    assert set(seen) == {10} and at.session.learned.cap == 30
-    at.session = None
-
-
-def test_target_out_of_reach_stays_at_your_tdp_and_keeps_your_target(fake_hw, monkeypatch):
-    """Enshrouded, 2026-11-12: 120 fps target, about 50 at 35 W. Auto FPS made that a 46 fps target and took watts
-    away; now the target stays 120 and the TDP stays 35 W."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 120, ceiling=35)
-    _BusyGame(at, 50.0 / 35, cap=50.0, busy_capped=99)
-    run(300)
-    assert set(run.seen["tdp"]) == {35} and s.target == 120 and s.unreachable
-    st = at.status()
-    assert st["target"] == 120 and st["best_fps"] == 50 and "out of reach" in s.last_action
-    at.session = None
-
-
-def test_target_counts_rendered_frames_with_frame_generation(fake_hw, monkeypatch):
-    """No XeLL figure, ClawDeck's 2x frame generation on: 136 presented is 68 rendered."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60)
-    s.fg = 2
-    _BusyGame(at, 8.0, cap=180.0, source="presented")
-    run(300)
-    assert s.learned.tdp == 17 and s.multiplier == 2.0          # 136 presented = 68 rendered at 17 W
-    at.session = None
-
-def test_most_frames_mode_measures_rendered_frames_with_frame_generation(fake_hw, monkeypatch):
-    at, s = _tuner(fake_hw, monkeypatch)
-    s.fg = 2
-    _Game(at, lambda tdp, *_: min(120.0, 6.0 * tdp), source="presented")
-    for _ in range(3):
-        at._step()
-    assert s.learned.max_fps == 60                               # 120 presented / 2
-    at.session = None
 
 
 def test_autotune_target_setting_is_saved_clamped_and_reaches_the_running_session(plugin, monkeypatch):
     p = plugin
     got = []
-    monkeypatch.setattr(p.autotune, "set_target", lambda t: got.append(t))
-    p.settings["autotune_auto_fps"] = True                       # from an older version: dropped
-    r = p.run(p.set_autotune_target(60))
-    assert r["ok"] and r["target"] == 60 and p.settings["autotune_target"] == 60 and got[-1] == 60
-    assert "autotune_auto_fps" not in p.settings
-    assert p.run(p.set_autotune_target(5))["target"] == 20 and got[-1] == 20   # 20 fps minimum
-    r = p.run(p.set_autotune_target(0))
-    assert r["target"] == 0 and got[-1] is None and "most frames" in r["summary"]
+    monkeypatch.setattr(p.autotune, "set_target", lambda t, a=True: got.append((t, a)))
+    r = p.run(p.set_autotune_target(60, True))
+    assert r["ok"] and r["target"] == 60 and p.settings["autotune_target"] == 60 and got[-1] == (60, True)
+    assert p.run(p.set_autotune_target(5, False))["target"] == 20 and got[-1] == (20, False)   # 20 fps minimum
+    r = p.run(p.set_autotune_target(0, False))                  # no target: the screen's highest refresh rate, Auto FPS on
+    assert r["target"] == 120 and r["auto_fps"] is True and p.settings["autotune_target"] == 120 and got[-1] == (120, True)
     started = {}
     monkeypatch.setattr(p.autotune, "start", lambda *a, **k: started.update(k))
-    p.settings.update(autotune=True, autotune_target=45, autotune_plugged=True)
+    p.settings.update(autotune=True, autotune_target=45, autotune_auto_fps=False, autotune_plugged=True)
     p._start_game_power("123", True)
-    assert started["target"] == 45 and "auto_fps" not in started and started["fg"] == 0
+    assert started["target"] == 45 and started["auto_fps"] is False and started["fg"] == 0
 
-
-def test_target_raises_above_your_tdp_and_saves_where_it_settles_for_the_next_start(plugin, monkeypatch):
-    """Your TDP is where target mode starts, not its cap: from 8 W it climbs to what the 60 fps target needs (up to
-    the model's 35 W), and the TDP it settles on is the game's own TDP at its next start (maintainer, 2026-11-12)."""
-    p = plugin
-    clock = {"t": 1000.0}
-    monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
-    p.settings["autotune_target"] = 60
-    p.run(p.set_tdp(8))                                            # the slider in the menus: 8 W
-    p.run(p.game_started("42"))
-    s = p.autotune.session
-    assert p.chip() == 8 and s.ceiling_tdp == 8 and s.max_tdp == 35 and s.phase == "target"
-    _BusyGame(p.autotune, 3.0)                                     # 22 W gives 66, 10 % over the target
-    for _ in range(120):
-        clock["t"] += 1
-        p.autotune._step()
-    assert s.learned.tdp == 22 and p.chip() == 22 and s.settled
-    assert p.run(p.get_autotune())["tdp"] == 22
-    p.run(p.game_stopped("42"))
-    assert p.profiles.own("42", False)["base"] == "custom" and p.profiles.own("42", False)["tdp"] == 22
-    assert p.chip() == 8                                           # the menus keep your 8 W
-    p.run(p.game_started("42"))
-    assert p.chip() == 22 and p.autotune.session.learned.tdp == 22  # the next start is there from launch
-    p.autotune.session.thermal_cap = 18                            # a step the temperature guard made is not saved
-    p.autotune.session.settled, p.autotune.session.learned.held = True, 25
-    p.run(p.game_stopped("42"))
-    assert p.profiles.own("42", False)["tdp"] == 22
-    p.run(p.game_started("42"))
-    p.run(p.game_stopped("42"))                                    # a quick launch, not settled: nothing saved
-    assert p.profiles.own("42", False)["tdp"] == 22
-
-
-def test_target_raises_at_once_however_low_the_fps(fake_hw, monkeypatch):
-    """No reading is skipped as "a menu": 16 fps at 8 W for a 120 target is under it, and raising is the safe side.
-    Fps under 35 % of the target used to be ignored (OotSS sat at 8 W and 11-28 fps for 40 s, 2026-11-12)."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 120, ceiling=8)
-    s.max_tdp = 35
-    _BusyGame(at, 2.0)                                           # 16 fps at 8 W, 70 at 35 W
-    run(10)
-    steps = [t for i, t in enumerate(run.seen["tdp"]) if i == 0 or t != run.seen["tdp"][i - 1]]
-    assert steps == [8, 35] and "under 120" in s.last_action    # one raise, straight to the maximum
-    at.session = None
-
-
-def test_target_one_slow_or_fast_second_is_no_trend(fake_hw, monkeypatch):
-    """3 s averages decide, not single seconds: a game alternating 62 and 70 fps (66 on average) holds 60 without being
-    20 % over, so nothing changes; 54 and 62 still average over 57 (5 % under); a drop that averages 44 gets watts at
-    once."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
-    s.max_tdp = 35
-    beat = {"n": 0, "dip": 0.0}
-
-    def fps(tdp, *_):
-        beat["n"] += 1
-        return (62.0 if beat["n"] % 2 else 70.0) - beat["dip"]
-    _Game(at, fps, gpu_busy=99)                                  # power-bound: no frame limit holds it
-    run(120)
-    assert s.learned.tdp == 20
-    beat["dip"] = 6.0                                            # 56 / 64: 58.7 or 61.3 on average
-    run(60)
-    assert s.learned.tdp == 20
-    beat["dip"] = 22.0                                           # 40 / 48
-    run(4)
-    assert s.learned.tdp > 20 and "under 60" in s.last_action
-    at.session = None
-
-def test_target_two_seconds_under_get_watts(fake_hw, monkeypatch):
-    """An under is the last G_UNDER_S (2) s average and the last second more than 5 % under (user: "3 seconds is a
-    long time to wait"): 56 fps for 60 gets watts after 2 s, where a 3 s average took 3. A slow first second at the
-    new watts that is back by the next one is no under."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=20)
-    s.max_tdp = 35
-    now = {"fps": 64.0, "next": []}
-
-    def fps(*_):
-        return now["next"].pop(0) if now["next"] else now["fps"]
-    _Game(at, fps, gpu_busy=99)                                  # power-bound, 64 is not 20 % over: it holds
-    run(30)
-    assert s.learned.tdp == 20
-    now["fps"] = 56.0
-    run(2)
-    assert s.learned.tdp > 20 and "56 fps, under 60: raised" in s.last_action
-    raised = s.learned.tdp
-    now["fps"], now["next"] = 64.0, [48.0]
-    run(5)
-    assert s.learned.tdp == raised
-    at.session = None
-
-
-def test_target_frames_lost_well_under_the_limit_are_not_the_limits(fake_hw, monkeypatch):
-    """Frames lost while the chip draws well under the TDP get no watts and don't take a step down back (Midnight Club 3
-    on PCSX2: 24 fps for a second at 26 W while drawing 10.7 W went back to 27 W for 10 minutes). The same under with
-    the chip at the limit goes back."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=20)
-    s.max_tdp = 35
-    now = {"fps": 30.0}
-    game = _Game(at, lambda *_: now["fps"], gpu_busy=40, pkg_w=18.0)   # a 30 fps lock at the limit, GPU not maxed
-    for _ in range(30):
-        run(1)
-        if s.learned.tdp < 20:
-            break
-    assert s.learned.tdp == 19 and "lowered TDP to 19 W" in s.last_action
-    game.smp["pkg_w"] = 8.0                                        # a stall: the chip far under the limit
-    now["fps"] = 24.0
-    run(3)
-    assert s.learned.tdp == 19 and "back to" not in s.last_action
-    now["fps"] = 30.0
-    run(2)
-    game.smp["pkg_w"] = 19.0                                       # now at the limit
-    now["fps"] = 24.0
-    run(2)
-    assert s.learned.tdp == 20 and "back to 20 W" in s.last_action
-    at.session = None
-
-
-def test_target_a_lock_with_the_chip_well_under_the_limit(fake_hw, monkeypatch):
-    """A game locked under the target with the chip well under the TDP is at its own lock without going to the full
-    TDP (Midnight Club 3 on PCSX2: 30 fps for a 60 target at 27 W with the chip at 12 W stayed at 27 W), and the TDP
-    comes straight down to just over what the chip draws, not 1 W every 12 s."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=27)
-    s.max_tdp = 30
-    _Game(at, lambda *_: 30.0, gpu_busy=40, pkg_w=12.0)
-    run(autotune.G_CAP_S + 1)
-    assert s.learned.cap == 30.0 and "steady at 30 fps at 27 W with the chip at 12 W" in s.last_action
-    run(autotune.G_LOWER_AFTER)
-    assert s.learned.tdp == 21 and s.g_last_drop is None           # 6 W at most a step, over the chip's 12 W
-    run(autotune.G_LOWER_AFTER)
-    assert s.learned.tdp == 15                                     # 12 W is 85 % of 14.1: just over it
-    run(autotune.G_LOWER_AFTER)
-    assert s.learned.tdp == 11 and s.g_last_drop is not None       # the third step of a way down: 4 W, and at the
-                                                                   # limit now, so it can be taken back
-    at.session = None
-
-
-def test_target_after_a_dip_more_watts_didnt_fix_it_goes_straight_back(fake_hw, monkeypatch):
-    """Midnight Club LA, 2026-11-14 17:47: 30 fps at 11 W, then a few seconds at 13-22 fps that 17, 22, 26 and 30 W
-    didn't fix; after it the way down from 30 W kept meeting the game's own dips and stayed at 23-30 W for minutes. The
-    first step down after raises goes straight back to the TDP before them. A heavier scene that needs the watts sends
-    it back up at once, and then it comes down step by step."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 30, ceiling=11)
-    s.max_tdp = 30
-    scene = {"dip": False, "needs": 11}
-    _Game(at, lambda tdp, *_: 15.0 if scene["dip"] else (30.0 if tdp >= scene["needs"] else 26.0), gpu_busy=50)
-    run(5)
-    assert s.learned.tdp == 11
-    scene["dip"] = True                                          # 8 s that no TDP fixes
-    run(8)
-    raised = s.learned.tdp
-    assert raised >= 20
-    scene["dip"] = False
-    run(autotune.G_LOWER_AFTER + 2)
-    assert s.learned.tdp == 11 and "where it held before" in s.last_action   # one step, not 1-2-4-6 W from the top
-    scene["needs"] = 20                                          # now a heavier scene: 11 W is too little
-    run(4)
-    assert s.learned.tdp == raised and "back to" in s.last_action
-    run(50)
-    assert s.learned.tdp <= 23                                   # a fresh way down (1, 2, 4 W), not 1 W at a time
-    run(100)
-    assert 20 <= s.learned.tdp < raised                          # down to what it needs
-    at.session = None
-
-
-def test_target_saves_the_tdp_that_held_not_a_quit_menus(fake_hw, monkeypatch):
-    """A TDP holds the target after G_SETTLE_S readings in a row at it; a 400 fps quit menu that lowers it after
-    that doesn't change what is saved."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=35)
-    game = _BusyGame(at, 3.0)                                    # 20 W gives 60
-    s.learned.tdp = 20
-    run(autotune.G_SETTLE_S - 1)
-    assert not s.settled and s.learned.held is None
-    run(1)
-    assert s.settled and s.learned.held == 20
-    game.per_w = 20.0                                            # the quit menu: 400 fps at 20 W
-    run(20)
-    assert s.learned.tdp < 20 and s.learned.held == 20
-    assert at.stop(revert=False)["learned"]["held"] == 20
-
-
-def test_target_fps_gets_the_tdp_moving_and_locked_fast(fake_hw, monkeypatch):
-    """From your TDP to the settled watts in under a minute, then no more changes while the game holds."""
-    at, s, run = _target_tuner(fake_hw, monkeypatch, 60, ceiling=30)
-    _BusyGame(at, 5.0, cap=100.0)                                # 14 W gives 70: no more 20 % over, GPU busy
-    t = 0
-    while s.learned.tdp != 14 and t < 200:
-        run(1)
-        t += 1
-    assert s.learned.tdp == 14 and t <= 60, t
-    changes = s.last_change_at
-    run(240)
-    assert s.learned.tdp == 14 and s.last_change_at == changes and min(run.seen["fps"]) >= 60   # locked
-    at.session = None
 
 def test_debug_launch_arms_one_launch_and_never_touches_another_tools_optiscaler(plugin, tmp_path, monkeypatch):
     p = plugin
@@ -2649,3 +2452,146 @@ def test_a_mangoapp_log_autotune_turned_on_is_deleted_when_the_game_ends(tmp_pat
     s._mango, s._mango_own = str(theirs), False
     s.release()
     assert theirs.exists()
+
+
+def test_a_frontend_games_limit_does_not_change_because_autotune_saved_learning(plugin):
+    """F: ES-DE's own pick is 30 W; the last pick on battery (another game) is 10 W. A game ES-DE starts, never picked,
+    works under ES-DE's 30 W. After one session Autotune saved `learned` under the game's key; the next session must
+    still work under ES-DE's 30 W: learning is not a pick."""
+    p = plugin
+    esde, game = "3119184808", "3119184808#ps2/GT4"
+    p.run(p.game_started("42"))
+    p.run(p.set_tdp(10))                       # a pick in another game: last_profile_battery = custom 10 W
+    p.run(p.game_stopped("42"))
+    p.profiles.set(esde, False, {"base": "custom", "tdp": 30})     # ES-DE's own pick
+    p.run(p.game_started(esde))
+    assert _frontend_event(p, "start", "ps2", "/roms/ps2/GT4.iso", "GT4")
+    s = p.autotune.session
+    assert s.appid == game and s.ceiling_tdp == 30                 # first session: ES-DE's pick
+    s.learned.start, s.settled = 20, True                          # a session that held 20 W
+    assert _frontend_event(p, "end", "ps2", "/roms/ps2/GT4.iso", "GT4")
+    own = p.profiles.own(game, False)
+    assert "learned" in own and not own.get("base")                # learning only, no pick
+    assert _frontend_event(p, "start", "ps2", "/roms/ps2/GT4.iso", "GT4")
+    s = p.autotune.session
+    assert s.ceiling_tdp == 30, f"the ceiling moved to {s.ceiling_tdp} W because Autotune saved learning"
+    assert s.cfg.start_w == 20 and s.learned.tdp == 20             # ... and it starts where the game held last time
+
+
+def test_the_toast_says_nothing_was_saved_when_it_was(plugin):
+    """An emulator that draws the whole limit at every limit, holding a reachable 30 fps target under the limit: the
+    governor never needs the full limit, so its reference (`max_fps`) stays None. The session settles and
+    _save_learned writes `learned`; the toast (summary) says "nothing new saved"."""
+    p = plugin
+    p.settings["autotune_target"] = 30
+    p.run(p.set_tdp(30))
+    p.run(p.game_started("77"))
+    _Game(p.autotune, lambda tdp, *_: 30.0 if tdp >= 14 else 2.1 * tdp).run(150)
+    r = p.run(p.game_stopped("77"))
+    own = p.profiles.own("77", False)
+    assert not ("learned" in own and "nothing new saved" in r["learned"]["summary"]), "toast contradicts the save"
+
+
+def test_a_guard_step_whose_write_fails_leaves_no_cap_the_guard_cannot_lift(fake_hw, monkeypatch, tmp_path):
+    """The guard steps (95 °C); the TDP write fails once. thermal_step returns False, so the guard records no step,
+    but Autotune keeps thermal_cap. The package cools; the guard, with nothing recorded, never calls thermal_release:
+    the governor works under the cap for the rest of the session."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=30, target=60)
+    _Game(at, lambda tdp, *_: min(60.0, 3.0 * tdp)).run(30)          # needs 20 W
+    temp = tmp_path / "temp"
+    temp.write_text("97000\n")
+    g = thermal.Guard(str(temp), "pkg")
+    ok = {"n": 0}
+    real = at.power.set_tdp
+
+    def flaky(w, plugged=None):
+        ok["n"] += 1
+        return False if ok["n"] == 1 else real(w, plugged)
+    monkeypatch.setattr(at.power, "set_tdp", flaky)
+    g.check(at.held_w(), 8, at.thermal_step, limit_w=30, raise_tdp=at.thermal_release)
+    temp.write_text("60000\n")                                       # cooled down, for minutes
+    for _ in range(20):
+        g.check(at.held_w(), 8, at.thermal_step, limit_w=30, raise_tdp=at.thermal_release)
+    assert s.thermal_cap is None, "a cap nobody will lift"
+
+
+@pytest.mark.parametrize("bad", [{"start": "14"}, {"start": None, "tdp": "x"}, {"start": [14]}, {"start": 14.7}, {"start": -3}, {"start": 1e9}, {"start": True}])
+def test_a_hand_edited_or_foreign_record_does_not_stop_the_game_from_starting(plugin, bad):
+    """profiles.json is a user file ("shareable as JSON"). A learned record with a start that is not a number must not
+    keep the game's power and Autotune from starting."""
+    p = plugin
+    p.run(p.set_tdp(30))
+    p.profiles.set("55", False, {"learned": {"ceiling": 30, **bad}})
+    try:
+        p.run(p.game_started("55"))
+    except Exception as e:                       # noqa: BLE001
+        pytest.fail(f"{bad}: game_started raised {type(e).__name__}: {e}; session={p.autotune.session is not None}, "
+                    f"governed={p.power.governed}, loop={'gov None' if p.autotune.session and p.autotune.session.gov is None else 'ok'}")
+    s = p.autotune.session
+    assert 8 <= s.learned.tdp <= 30 and isinstance(s.learned.tdp, int)
+
+
+def test_xemu_already_running_gets_no_write_of_autotunes_own(plugin, tmp_path, monkeypatch):
+    """R6: xemu, no write. A session that starts while xemu already runs (resume, a new power source, the frontend
+    restarting a session) writes Autotune's start level and the 8 s window, and only the own-pace check 3 s later puts
+    the pick back: 3 s of xemu at mid-range after every resume."""
+    p = plugin
+    proc = tmp_path / "proc"
+    (proc / "4242").mkdir(parents=True)
+    (proc / "4242" / "comm").write_text("xemu\n")
+    monkeypatch.setattr(autotune, "PROC", str(proc))
+    p.run(p.set_tdp(30))
+    p.run(p.game_started("3119184808"))
+    assert p.chip() == 30, "Autotune's start level is on the chip of a game it must stay out of"
+
+
+def test_a_pause_of_half_a_minute_does_not_throw_away_what_the_session_held(plugin, monkeypatch):
+    """A game holds 14 W for two minutes; the player pauses it (no frames, e.g. a paused game that stops presenting)
+    for 31 s; frames come back for 40 s; the game is closed. The session held 14 W for 2 minutes: the saved start
+    should say so. The give-up replaces the governor (its held_s) and restarts at the full limit."""
+    p = plugin
+    p.settings["autotune_target"] = 30
+    p.run(p.set_tdp(30))
+    p.run(p.game_started("88"))
+    fps = {"on": True}
+    g = _Game(p.autotune, lambda tdp, *_: (30.0 if tdp >= 14 else 2.1 * tdp) if fps["on"] else None)
+    import time as _t
+    monkeypatch.setattr(autotune, "time", type("C", (), {"monotonic": staticmethod(lambda: g.t), "time": staticmethod(_t.time)}))
+    g.run(150)
+    fps["on"] = False
+    g.run(31)
+    fps["on"] = True
+    g.run(40)
+    p.run(p.game_stopped("88"))
+    own = p.profiles.own("88", False).get("learned", {})
+    assert own.get("start") == 14, f"saved start {own.get('start')} (tdp {own.get('tdp')})"
+
+
+def test_a_mangoapp_gap_of_seconds_is_not_filled_from_the_other_log(fake_hw, tmp_path, monkeypatch):
+    """mangoapp gives rows, then none for 5 s (under MANGOAPP_RELOG_S) while the game's own MangoHud log writes a row a
+    second. The original gives no frames for those looks; without the "between two rows" return the own log's rows
+    come back as frames from the second silent look on."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(autotune, "mangoapp_command", lambda c: True)
+    logs = tmp_path / "mangohud"
+    logs.mkdir()
+    own = logs / "game_2026-11-15_14-00-00.csv"
+    own.write_text("os\nLinux\nfps,frametime\n")
+    live = tmp_path / "mangoapp_2026-11-15_14-00-01.csv"
+    _mango_rows(live, [16.7] * 3, header=True)
+    smp = autotune.Sampler(fake_hw, str(logs), home=str(tmp_path))
+    smp.set_prefix(None)
+    smp.frametime()
+    _mango_rows(live, [16.7] * 30)
+    clock["t"] += 0.5
+    assert smp.frametime()[1] == pytest.approx(59.9, abs=0.1)
+    got = []
+    for i in range(10):                                   # 5 s: mangoapp silent, the own log a row a second
+        if i % 2 == 0:
+            with open(own, "a") as f:
+                f.write("60.0,16.7\n")
+        clock["t"] += 0.5
+        smp._log_checked = -1e9
+        got.append(smp.frametime())
+    assert all(x == (None, None) for x in got), got
