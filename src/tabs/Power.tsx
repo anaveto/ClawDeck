@@ -190,6 +190,7 @@ export const PowerTab: FC<{ quick?: boolean }> = ({ quick }) => {
       : at?.why && at.why !== "not started" ? `Autotune: ${at.why}` : "Autotune on: starting…")
     : at.own_pace ? `Autotune stays out of ${at.own_pace}: ${at.own_pace_why}, so your limit stays on the chip`
     : at.no_frames ? "Autotune has no frame rate from this game, so your limit is on the chip; it takes over when frames come"
+    : at.paused && at.why ? `Autotune: ${at.why}`
     : at.paused ? "Autotune paused in this game. Pick a profile or a target to hand back control"
     : `Autotune on · ${fpsText}` + (at.fps_per_w ? ` · ${at.fps_per_w} fps/W` : "");
   // the live line under the slider: your limit (the slider) and what Autotune runs the chip at under it now
@@ -325,7 +326,7 @@ export const PowerTab: FC<{ quick?: boolean }> = ({ quick }) => {
           </PanelSectionRow>
           <PanelSectionRow>
             <ToggleField label="Autotune when plugged in" checked={atPlugged}
-              onChange={async (v) => { setAtPlugged(v); await setSetting("autotune_plugged", v); toast(v ? "Autotune also runs on the charger, from the next game" : "Autotune runs on battery only, from the next game"); }}
+              onChange={async (v) => { setAtPlugged(v); await setSetting("autotune_plugged", v); toast(v ? "Autotune also runs on the charger" : "Autotune runs on battery only"); }}
               description={explain("On by default: on the charger it still saves heat and fan noise for nearly the same frames.",
                 quick ? undefined : "a quieter, cooler Claw when docked.", "fewer frames than the plugged-in profile could give.")} />
           </PanelSectionRow>
