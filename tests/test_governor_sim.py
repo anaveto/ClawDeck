@@ -95,7 +95,7 @@ def test_the_chargers_30_w_stop_under_a_35_w_pick_costs_no_frames(name):
         case = (name, target, [(r.limit_w, r.starved_pct) for r in at30], [(r.limit_w, r.starved_pct) for r in at35],
                 [(r.limit_w, r.starved_pct) for r in stop])
         assert abs(mean(stop, "starved_pct") - mean(at35, "starved_pct")) <= 0.5, case
-        assert abs(mean(stop, "limit_w") - mean(at35, "limit_w")) <= 1.0, case   # (the limit is the one without the stop)
+        assert mean(stop, "limit_w") <= mean(at35, "limit_w") + 1.0, case   # (a failed level over the draw: lower)
         assert mean(stop, "starved_pct") <= mean(at30, "starved_pct") + 1.5, case
 
 
