@@ -892,8 +892,8 @@
   "r-met-pace-booked-as-the-full-limits",
   "py_modules/clawdeck/governor.py",
   "rule taken out: met pace booked as the full limits",
-  "            elif st.ref is None or cfg.target > st.ref:\n                st.ref = cfg.target",
-  "            elif st.ref is None or level > st.ref:\n                st.ref = level"
+  "                st.ref = cfg.target if st.ref is None else min(level, cfg.target)\n",
+  "                st.ref = level\n"
  ],
  [
   "r-failure-booked-over-the-target",
@@ -940,14 +940,14 @@
  [
   "r-game-that-dips-not-judged-on-slow-frames-1",
   "py_modules/clawdeck/governor.py",
-  "rule taken out, place 1: game that dips not judged on slow frames",
+  "rule taken out: game that dips not judged on slow frames (1)",
   "        slow = _edge(st.watch, st.base_slow or 0.0) if seen >= DWELL_S / 2 else 0",
   "        slow = _edge(st.watch, st.base_slow or 0.0) if seen >= DWELL_S / 2 and not dippy else 0"
  ],
  [
   "r-game-that-dips-not-judged-on-slow-frames-2",
   "py_modules/clawdeck/governor.py",
-  "rule taken out, place 2: game that dips not judged on slow frames",
+  "rule taken out: game that dips not judged on slow frames (2)",
   "        if (settled and waited and len(mine) >= 3 * N and st.base_slow is not None and _edge(mine, st.base_slow)\n",
   "        if (settled and not dippy and waited and len(mine) >= 3 * N and st.base_slow is not None and _edge(mine, st.base_slow)\n"
  ],
@@ -1020,13 +1020,6 @@
   "rule taken out: home recorded only from a settled pace in the band",
   "    if st.limit < top and settled and not over and t - st.changed_at >= HOME_S and st.lo is not None and (",
   "    if st.limit < top and t - st.changed_at >= HOME_S and st.lo is not None and ("
- ],
- [
-  "r-a-fall-inside-the-margin-is-a-loss",
-  "py_modules/clawdeck/governor.py",
-  "rule taken out: a fall inside the margin is a loss",
-  "    return min(st.lo, _goal_at(st.lo / st.ratio, cfg) * (1 + SUSTAINED))     # (answered at that goal, not under it)\n",
-  "    return st.lo\n"
  ],
  [
   "r-edge-watt-judged-at-once",
@@ -1347,8 +1340,8 @@
   "r-a-new-target-does-not-govern-a-late-game",
   "main.py",
   "rule taken out: a new target does not govern a late game",
-  "        if self.running_appid is None or self._autotune_governs(self._pick(self._game_key(), plugged)[\"prof\"], plugged):\n            self.autotune.set_target(t, auto_fps)\n",
-  "        if True:\n            self.autotune.set_target(t, auto_fps)\n"
+  "        if self.running_appid is None or self._autotune_governs(self._pick(self._game_key(), plugged)[\"prof\"], plugged):\n            self.autotune.set_target(t)\n",
+  "        if True:\n            self.autotune.set_target(t)\n"
  ],
  [
   "r-the-late-mark-holds-the-frontends-key",
@@ -1676,8 +1669,8 @@
   "r-a-climb-at-the-full-limit-is-marked",
   "py_modules/clawdeck/governor.py",
   "rule taken out: a climb at the full limit is marked",
-  "        st.climbed = True\n",
-  ""
+  "        st.climbed = st.climbed or (st.lost is not None and any(",
+  "        st.climbed = st.climbed and (st.lost is not None and any("
  ],
  [
   "r-each-look-starts-unmarked",
@@ -1729,13 +1722,6 @@
   "2 ** max(0, st.misses - 1)"
  ],
  [
-  "r-out-of-reach-goal-is-the-full-limits-frames-less-1-pct",
-  "py_modules/clawdeck/governor.py",
-  "rule taken out: out of reach goal is the full limits frames less 1 pct",
-  "        return ref * (1 - SUSTAINED)\n",
-  "        return ref * (1 - TOL)\n"
- ],
- [
   "r-free-loss-judged-against-the-line-it-fell-under",
   "py_modules/clawdeck/governor.py",
   "rule taken out: free loss judged against the line it fell under",
@@ -1753,7 +1739,7 @@
   "r-no-step-down-out-of-reach-while-the-game-wobbles",
   "py_modules/clawdeck/governor.py",
   "rule taken out: no step down out of reach while the game wobbles",
-  "            and (small <= SUSTAINED or not (cfg.auto_fps and ref < cfg.target * REACHED))):\n",
+  "            and (small <= SUSTAINED or ref >= cfg.target * REACHED)):\n",
   "            ):\n"
  ],
  [
@@ -2371,5 +2357,40 @@
   "WATCH_S 0.1 -> 0.05",
   "\nLOOK_S, WATCH_S = 0.5, 0.1",
   "\nLOOK_S, WATCH_S = 0.5, 0.05"
+ ],
+ [
+  "r-out-of-reach-goal-is-the-full-limits-frames-less-same",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: out of reach goal is the full limits frames less same",
+  "        return ref * (1 - SAME)\n",
+  "        return ref * (1 - SUSTAINED)\n"
+ ],
+ [
+  "r-a-climb-is-the-full-limits-loss-only-where-it-lost-as-much",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a climb is the full limits loss only where it lost as much",
+  "        st.climbed = st.climbed or (st.lost is not None and any(\n            _fps(st.watch[i:i + 2]) <= st.lost * (1 + CLEAR) for i in range(third)))\n",
+  "        st.climbed = True\n"
+ ],
+ [
+  "r-a-met-pace-does-not-raise-a-measured-reference-to-the-target",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a met pace does not raise a measured reference to the target",
+  "            elif st.ref is None or level > st.ref:\n                # the full limit gives at least what this limit gives (of your target: a menu's frames over it are not\n                # the game's). With nothing known, your target: a pace within TOL of it is no sign it is out of reach\n                st.ref = cfg.target if st.ref is None else min(level, cfg.target)\n",
+  "            elif st.ref is None or cfg.target > st.ref:\n                # the full limit gives at least what this limit gives (of your target: a menu's frames over it are not\n                # the game's). With nothing known, your target: a pace within TOL of it is no sign it is out of reach\n                st.ref = cfg.target\n"
+ ],
+ [
+  "r-the-band-out-of-reach-is-held-to-its-lower-edge",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: the band out of reach is held to its lower edge",
+  "    if st.lo is None or (st.lo >= cfg.target * (1 - TOL) and not out_of_reach(st, cfg)):\n",
+  "    if st.lo is None or (st.lo >= cfg.target * (1 - TOL)):\n"
+ ],
+ [
+  "r-a-met-pace-raises-the-reference-to-itself",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a met pace raises the reference to itself",
+  "                st.ref = cfg.target if st.ref is None else min(level, cfg.target)\n",
+  "                st.ref = cfg.target\n"
  ]
 ]
