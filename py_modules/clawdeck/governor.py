@@ -23,8 +23,8 @@ tools/autotune_sim.py. It changes `state` in place and returns what to do.
 Words:
   pace       the frame time the game holds: the median of the last PACE_FRAMES frames;
   reference  what the full limit gives: measured there, or the pace with the package 2 W or more under the limit;
-  goal       what has to be delivered: your target (or the reference when that is lower and Auto FPS is on) less
-             TOL;
+  goal       what has to be delivered: your target less TOL (or the reference less SUSTAINED when that is lower
+             and Auto FPS is on);
   band       the pace at the held limit when the limit was last known to cost no more than that: by the full limit
              after a loss, by the step that came here and held, or all the time while the limit can't hold the game
              back (the full limit, the package 2 W under the limit, the pace at your target). Lowest and highest;
@@ -166,6 +166,7 @@ class State:
     loss_since: float | None = None # a loss seen in a game that dips by itself: since when
     small_since: float | None = None
     free_loss: float | None = None  # a loss at a limit that can't be its cause: since when (a dip if it is over soon)
+    free_line: float = 0.0          # ... and the line it fell under then (the band takes the pace in meanwhile)
     held_for: float | None = None   # how long the limit had held when a loss sent it to the full limit
     said: tuple = (-1e9, 0.0)       # when the full limit last said of a loss "the scene, not the limit", and what
                                     # it gave then
@@ -319,7 +320,9 @@ def goal(st: State, cfg: Cfg) -> float:
 
 def _goal_at(ref: float | None, cfg: Cfg) -> float:
     """... were `ref` what the full limit gives."""
-    return (ref if cfg.auto_fps and ref is not None and ref < cfg.target * REACHED else cfg.target) * (1 - TOL)
+    if cfg.auto_fps and ref is not None and ref < cfg.target * REACHED:
+        return ref * (1 - SUSTAINED)
+    return cfg.target * (1 - TOL)
 
 
 def _need(st: State, cfg: Cfg) -> float:
@@ -904,7 +907,8 @@ def _hold(st, obs, cfg, act, top, cur, pace_ms, here, clear, small, dippy, free,
                                                      # it holds nothing back, and the band comes from these frames
     if cur < need * (1 - clear):
         if free or st.limit >= top:                  # the limit can't be the cause, and there is nothing more to give
-            st.free_loss = st.free_loss if st.free_loss is not None else t
+            if st.free_loss is None:
+                st.free_loss, st.free_line = t, need
             return act
         if dippy:                                    # this game dips by itself: only a loss that stays counts
             st.loss_since = st.loss_since if st.loss_since is not None else t
@@ -919,7 +923,7 @@ def _hold(st, obs, cfg, act, top, cur, pace_ms, here, clear, small, dippy, free,
         if st.loss_since - st.changed_at >= RECENT_S:
             st.dips.append(t)                        # it passed by itself (the last 2 N frames are back): one more of
         st.loss_since = None                         # the game's own dips. A loss at the edge of "clear" comes and goes
-    if st.free_loss is not None and (_fps(list(st.pace)[-2 * N:]) >= need * (1 - small) or t - st.free_loss > DIP_MAX_S):
+    if st.free_loss is not None and (_fps(list(st.pace)[-2 * N:]) >= st.free_line * (1 - small) or t - st.free_loss > DIP_MAX_S):
         # over (the last 2 N frames are back), or it stays: a dip of the game's own if it was short, else another scene
         if t - st.free_loss <= DIP_MAX_S and st.free_loss - st.changed_at >= RECENT_S:
             st.dips.append(t)
@@ -982,8 +986,9 @@ def _hold(st, obs, cfg, act, top, cur, pace_ms, here, clear, small, dippy, free,
         # more frames than the band has, under your target, at a limit that holds the chip: another place, or a lighter
         # one. What the band says of the full limit (no more frames than here, within the margin) says nothing there.
         # Seen as a loss is: far more on the last 2 N frames of this limit (the game back from a video at the limit
-        # the video needed); a little more on the pace
-        tail = _jumped(mine, st.hi, clear) if st.hi is not None else None
+        # the video needed; both halves within `small`: one frame of the scene before puts them 1.5 % under the new
+        # one); a little more on the pace
+        tail = _jumped(mine, st.hi, small) if st.hi is not None else None
         jump = tail is not None and tail < cfg.target * (1 - TOL)
         if st.seen_hi is not None and here >= st.seen_hi * (1 - ABOVE):
             st.seen_at = t
