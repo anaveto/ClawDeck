@@ -38,14 +38,14 @@ def test_a_light_game_on_its_frame_limit_is_at_the_floor_within_half_a_minute(ta
 @pytest.mark.parametrize("target", [30, 60, None])
 def test_a_jump_of_the_need_is_answered_within_seconds(target):
     """Midnight Club driving: within 20 s the game goes from holding 30 fps at 14 W to needing more than 30 W. With
-    its own 30 fps as the target, with a target it can't reach, and with none, in twelve games: no stretch of 22 s
-    and no more than 10 % of the time under what the full limit gives less 0.5 %, and 0.5 % of the frames lost at
+    its own 30 fps as the target, with a target it can't reach, and with none, in twelve games: no stretch of 4 s
+    and no more than 3 % of the time under what the full limit gives less 0.5 %, and 0.5 % of the frames lost at
     most (the game's frame times spread 9 %: a watch can't tell 3 % from the limit's; installed: 38 s, 19 % and
     1.0 %)."""
     for seed in range(1, 13):
         game = sim.Game(sim.SCENARIOS["emulator-need-jumps"], seed=seed, goal_fps=min(target, 30) if target else None)
         s = sim.run(sim.New(target=target), game).score()
-        assert s.longest_starved_s <= 22.0 and s.starved_pct <= 10.0 and s.lost_pct <= 0.5, (target, seed, s)
+        assert s.longest_starved_s <= 4.0 and s.starved_pct <= 3.0 and s.lost_pct <= 0.5, (target, seed, s)
 
 
 @pytest.mark.parametrize("seed", [1, 2, 3])

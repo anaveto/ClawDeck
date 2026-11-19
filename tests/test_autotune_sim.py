@@ -177,8 +177,7 @@ def test_autotune_wired_does_what_the_governor_alone_does():
         wired = sim.run(sim.Wired(target=target), sim.Game(scenario, goal_fps=target)).score()
         alone = sim.run(sim.New(target=target), sim.Game(scenario, goal_fps=target)).score()
         assert abs(wired.over_w - alone.over_w) <= 2.0, (name, wired, alone)
-        assert wired.starved_pct <= alone.starved_pct + 1.5, (name, wired, alone)
-        assert wired.longest_starved_s <= alone.longest_starved_s + 3.5, (name, wired, alone)
+        assert wired.starved_pct <= alone.starved_pct + 1.5 and wired.longest_starved_s <= 3.5, (name, wired, alone)
 
 
 def _parked(tuner, scenario, seed=1):
