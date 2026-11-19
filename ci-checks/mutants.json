@@ -619,8 +619,8 @@
   "m-clock-look-without-binds",
   "py_modules/clawdeck/governor.py",
   "the look by the clock also while the package draws less than the limit",
-  "        if (settled and binds and st.free_w != st.limit",
-  "        if (settled and st.free_w != st.limit"
+  "        if (settled and binds and st.free_w != st.limit and st.limit < top - 1\n",
+  "        if (settled and st.free_w != st.limit and st.limit < top - 1\n"
  ],
  [
   "m-said-after-any-answer",
@@ -808,8 +808,8 @@
   "r-home-under-another-scenes-fails",
   "py_modules/clawdeck/governor.py",
   "rule taken out: home under another scenes fails",
-  "and _same(st.home_ref, ref) and all(w < st.home for w in under if _same(st.fail[w][2], ref))):",
-  "and _same(st.home_ref, ref) and all(w < st.home for w in under)):"
+  "            and all(w < st.home for w in under if _same(st.fail[w][2], ref) or st.fail[w][1] >= 2)):\n",
+  "            and all(w < st.home for w in under)):\n"
  ],
  [
   "r-band-not-swapped-back",
@@ -1130,8 +1130,8 @@
   "r-look-by-the-clock-with-the-target-in-reach",
   "py_modules/clawdeck/governor.py",
   "rule taken out: look by the clock with the target in reach",
-  " and need < cfg.target * (1 - TOL)\n                and (st.full_at is None",
-  "\n                and (st.full_at is None"
+  "                and (need < cfg.target * (1 - TOL) or st.full_at is None and here < cfg.target * REACHED)\n",
+  ""
  ],
  [
   "r-a-menus-frames-count-as-the-full-limit",
@@ -1179,8 +1179,8 @@
   "r-look-by-the-clock-where-the-package-is-under-the-limit",
   "py_modules/clawdeck/governor.py",
   "rule taken out: look by the clock where the package is under the limit",
-  "        if (settled and binds and st.free_w != st.limit and st.limit < top - 1 and need < cfg.target * (1 - TOL)\n",
-  "        if (settled and binds and st.limit < top - 1 and need < cfg.target * (1 - TOL)\n"
+  "        if (settled and binds and st.free_w != st.limit and st.limit < top - 1\n",
+  "        if (settled and binds and st.limit < top - 1\n"
  ],
  [
   "r-step-down-holds-at-the-goal",
@@ -1200,15 +1200,15 @@
   "r-what-a-step-cost-against-the-limit-before-only",
   "py_modules/clawdeck/governor.py",
   "rule taken out: what a step cost against the limit before only",
-  "        most = full or st.before\n",
-  "        most = st.before\n"
+  "        most = min(full or st.before or 0.0, cfg.target) if cfg.most else full or st.before\n",
+  "        most = min(st.before or 0.0, cfg.target) if cfg.most else st.before\n"
  ],
  [
   "r-what-a-step-cost-against-the-full-limit-only",
   "py_modules/clawdeck/governor.py",
   "rule taken out: what a step cost against the full limit only",
-  "        most = full or st.before\n",
-  "        most = full\n"
+  "        most = min(full or st.before or 0.0, cfg.target) if cfg.most else full or st.before\n",
+  "        most = min(full or 0.0, cfg.target) if cfg.most else full\n"
  ],
  [
   "r-frame-rate-falling-at-the-full-limit-keeps-it",
@@ -2355,8 +2355,8 @@
   "r-out-of-reach-goal-is-the-full-limits-frames-less-same",
   "py_modules/clawdeck/governor.py",
   "rule taken out: out of reach goal is the full limits frames less same",
-  "        return ref * (1 - max(SAME, noise))\n",
-  "        return ref * (1 - max(SUSTAINED, noise))\n"
+  "        return min(ref, cfg.target) * (1 - max(SAME, min(noise, SUSTAINED)))\n",
+  "        return min(ref, cfg.target) * (1 - max(SUSTAINED, min(noise, SUSTAINED)))\n"
  ],
  [
   "r-a-climb-is-the-full-limits-loss-only-where-it-lost-as-much",
@@ -2397,8 +2397,8 @@
   "r-the-goal-out-of-reach-is-widened-by-the-games-wobble",
   "py_modules/clawdeck/governor.py",
   "rule taken out: the goal out of reach is widened by the games wobble",
-  "        return ref * (1 - max(SAME, noise))",
-  "        return ref * (1 - SAME)"
+  "        return min(ref, cfg.target) * (1 - max(SAME, min(noise, SUSTAINED)))\n",
+  "        return min(ref, cfg.target) * (1 - SAME)\n"
  ],
  [
   "r-the-held-need-out-of-reach-is-the-goal-of-the-band",
@@ -2418,8 +2418,8 @@
   "r-no-wobble-gate-out-of-reach",
   "py_modules/clawdeck/governor.py",
   "rule taken out: no wobble gate out of reach",
-  "            and abs(cur - here) <= clear * here and _steady(st, t, clear)):\n",
-  "            and abs(cur - here) <= clear * here and _steady(st, t, clear)\n            and (small <= SUSTAINED or ref >= cfg.target * REACHED)):\n"
+  "            and _steady(st, t, clear if ref >= cfg.target * REACHED or not binds else min(clear, 2 * SUSTAINED))):\n",
+  "            and _steady(st, t, clear if ref >= cfg.target * REACHED or not binds else min(clear, 2 * SUSTAINED))\n            and (small <= SUSTAINED or ref >= cfg.target * REACHED)):\n"
  ],
  [
   "r-a-second-try-starts-the-failed-step-count-over",
@@ -2427,5 +2427,96 @@
   "rule taken out: a second try starts the failed step count over",
   "        st.before, st.retest, st.loss_since, st.long, st.misses = now, True, None, False, 0\n",
   "        st.before, st.retest, st.loss_since, st.long = now, True, None, False\n"
+ ],
+ [
+  "r-no-target-goal-is-the-screens-rate-less-same",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no target goal is the screens rate less same",
+  "    if ref is not None and (ref < cfg.target * REACHED or cfg.most):\n        return min(ref, cfg.target) * (1 - max(SAME, min(noise, SUSTAINED)))\n",
+  "    if ref is not None and ref < cfg.target * REACHED:\n        return ref * (1 - max(SAME, min(noise, SUSTAINED)))\n"
+ ],
+ [
+  "r-no-target-is-out-of-reach-up-to-the-screens-rate",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no target is out of reach up to the screens rate",
+  "    return st.ref is not None and (cfg.most or st.ref < cfg.target * REACHED)\n",
+  "    return st.ref is not None and st.ref < cfg.target * REACHED\n"
+ ],
+ [
+  "r-no-target-step-owes-no-frames-over-the-screens-rate",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: no target step owes no frames over the screens rate",
+  "        most = min(full or st.before or 0.0, cfg.target) if cfg.most else full or st.before\n",
+  "        most = full or st.before\n"
+ ],
+ [
+  "r-no-target-set-is-told-to-the-governor",
+  "py_modules/clawdeck/autotune.py",
+  "rule taken out: no target set is told to the governor",
+  "start_w=start_w, most=s.user_target >= self.target_of(0))\n",
+  "start_w=start_w)\n"
+ ],
+ [
+  "r-out-of-reach-the-band-does-not-follow-a-falling-pace",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: out of reach the band does not follow a falling pace",
+  "            if free or st.lo is None or level >= st.lo or not out_of_reach(st, cfg):\n                _take(st, level)\n",
+  "            _take(st, level)\n"
+ ],
+ [
+  "r-a-pace-under-the-target-gets-a-look",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a pace under the target gets a look",
+  "        if (settled and binds and st.free_w != st.limit and st.limit < top and not out_of_reach(st, cfg)\n                and (here / st.ratio if st.ratio else here) < cfg.target * REACHED * (1 - small)):\n            st.lost, st.lost_slow = here, 0.0\n            watch(\"check\", top,\n                  f\"{here:.1f} fps at {st.limit} W, under your target: checking what the full {top} W gives\", \"rise\")\n            return act\n",
+  ""
+ ],
+ [
+  "r-out-of-reach-goal-wobble-at-most-sustained",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: out of reach goal wobble at most sustained",
+  "        return min(ref, cfg.target) * (1 - max(SAME, min(noise, SUSTAINED)))\n",
+  "        return min(ref, cfg.target) * (1 - max(SAME, noise))\n"
+ ],
+ [
+  "r-out-of-reach-step-from-a-pace-steady-within-2-pct-step",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: out of reach step from a pace steady within 2 pct",
+  "            and _steady(st, t, clear if ref >= cfg.target * REACHED or not binds else min(clear, 2 * SUSTAINED))):\n",
+  "            and _steady(st, t, clear)):\n"
+ ],
+ [
+  "r-out-of-reach-step-from-a-pace-steady-within-2-pct-probe",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: out of reach step from a pace steady within 2 pct",
+  "            elif nxt is not None and _steady(st, t, clear if want >= cfg.target * (1 - TOL) or (\n                    obs.draw_w is not None and obs.draw_w <= st.limit - 2) else min(clear, 2 * SUSTAINED)):\n",
+  "            elif nxt is not None and _steady(st, t, clear):\n"
+ ],
+ [
+  "r-a-free-limit-steps-from-the-games-own-steadiness-step",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a free limit steps from the games own steadiness",
+  "            and _steady(st, t, clear if ref >= cfg.target * REACHED or not binds else min(clear, 2 * SUSTAINED))):\n",
+  "            and _steady(st, t, clear if ref >= cfg.target * REACHED else min(clear, 2 * SUSTAINED))):\n"
+ ],
+ [
+  "r-a-free-limit-steps-from-the-games-own-steadiness-probe",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a free limit steps from the games own steadiness",
+  "            elif nxt is not None and _steady(st, t, clear if want >= cfg.target * (1 - TOL) or (\n                    obs.draw_w is not None and obs.draw_w <= st.limit - 2) else min(clear, 2 * SUSTAINED)):\n",
+  "            elif nxt is not None and _steady(st, t, clear if want >= cfg.target * (1 - TOL) else min(clear, 2 * SUSTAINED)):\n"
+ ],
+ [
+  "r-home-is-not-over-a-level-that-failed-twice",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: home is not over a level that failed twice",
+  "            and all(w < st.home for w in under if _same(st.fail[w][2], ref) or st.fail[w][1] >= 2)):\n",
+  "            and all(w < st.home for w in under if _same(st.fail[w][2], ref))):\n"
+ ],
+ [
+  "r-a-look-while-the-full-limit-was-never-measured",
+  "py_modules/clawdeck/governor.py",
+  "rule taken out: a look while the full limit was never measured",
+  "                and (need < cfg.target * (1 - TOL) or st.full_at is None and here < cfg.target * REACHED)\n",
+  "                and need < cfg.target * (1 - TOL)\n"
  ]
 ]
