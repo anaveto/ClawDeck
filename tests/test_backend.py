@@ -384,12 +384,14 @@ def test_autotune_starts_where_the_game_held_under_the_same_limit_and_target_els
     at.start("1", {**saved, "start": 16}, 8, 26, False)         # another limit: nothing known, mid-range
     assert at.session.learned.tdp == 17 and at.session.learned.ceiling == 26
     at.start("1", {**saved, "start": 16}, 8, 20, False, target=60)   # another goal: the same
-    assert at.session.learned.tdp == 14 and at.session.user_target == 60
+    assert at.session.learned.tdp == 14 and at.session.user_target == 60 and not at.session.cfg.most
     at.start("1", {**saved, "start": 16}, 8, 20, False, at_limit=True)   # picked in the game just now: as picked
     assert at.session.learned.tdp == 20
     at.start("1", None, 8, 30, False)
     assert at.session.learned.tdp == 19
-    assert at.session.user_target == 120                        # no target set: the screen's highest refresh rate
+    assert at.session.user_target == 120 and at.session.cfg.most   # no target set: the screen's highest refresh rate
+    at.start("1", None, 8, 30, False, target=120)
+    assert at.session.cfg.most                                  # (that rate set as the target: the same)
     at.session = None
 
 
@@ -3027,19 +3029,6 @@ def test_wide_vrr_live_where_no_rpm_ostree_boot_on_bazzite_and_a_boot_loop_guard
 
 def m_runtime(p):
     return p._vrr_live_again.__func__.__globals__["RUNTIME_DIR"]
-
-
-def _target_tuner(fake_hw, monkeypatch, target, auto_fps=True, ceiling=25):
-    at, s = _tuner(fake_hw, monkeypatch, ceiling=ceiling)
-    clock = {"t": 1000.0}
-    monkeypatch.setattr(autotune.time, "monotonic", lambda: clock["t"])
-    at._start_target(s, {}, target, auto_fps)
-
-    def run(n):
-        for _ in range(n):
-            clock["t"] += 1
-            at._step()
-    return at, s, run
 
 
 def test_autotune_target_setting_is_saved_clamped_and_reaches_the_running_session(plugin, monkeypatch):

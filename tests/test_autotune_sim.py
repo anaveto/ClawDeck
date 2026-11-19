@@ -177,8 +177,7 @@ def test_autotune_wired_does_what_the_governor_alone_does():
         wired = sim.run(sim.Wired(target=target), sim.Game(scenario, goal_fps=target)).score()
         alone = sim.run(sim.New(target=target), sim.Game(scenario, goal_fps=target)).score()
         assert abs(wired.over_w - alone.over_w) <= 2.0, (name, wired, alone)
-        assert wired.starved_pct <= alone.starved_pct + 1.5, (name, wired, alone)
-        assert wired.longest_starved_s <= alone.longest_starved_s + 3.5, (name, wired, alone)
+        assert wired.starved_pct <= alone.starved_pct + 1.5 and wired.longest_starved_s <= 3.5, (name, wired, alone)
 
 
 def _parked(tuner, scenario, seed=1):
@@ -279,6 +278,25 @@ def test_a_menu_at_the_title_screens_frame_rate_takes_no_step_down(menu, target,
         before = [limit for t, limit, *_ in game.trace if t < 250][-1]
         assert min(limit for t, limit, *_ in game.trace if 250 <= t < 250 + menu) >= before, (seed, before)
 
+
+
+@pytest.mark.parametrize("target", [60, None])
+def test_a_heavier_moment_every_ten_seconds_gets_the_limit_it_needs(target, monkeypatch):
+    """A light game on its 60 fps frame limit (7 W) and 1.5 s every 10 s in which 30 fps at 8 W rise to 55 from 22 W
+    up. Each moment fails the level under 22 W: the level is not the one to go back to (104 to 106 of the 126 s of
+    the moments under 22 W; the installed Autotune 6 s)."""
+    light = sim.Scene(curve=((8, 75.0), (30, 75.0)), cap=60.0, free_w=7.0, jitter=0.011, cpu_pct=15, gpu_bound=True)
+    moment = sim.Scene(curve=((8, 30.0), (12, 45.0), (22, 55.0), (30, 55.0)), cap=60.0, jitter=0.011, cpu_pct=40, gpu_bound=True)
+    monkeypatch.setitem(sim.SCENES, "light", light)
+    monkeypatch.setitem(sim.SCENES, "moment", moment)
+    scenario = [(60, "light", 1.0)] + [(8.5, "light", 1.0), (1.5, "moment", 1.0)] * 84
+    for seed in (1, 3):
+        game = sim.Game(scenario, seed=seed, goal_fps=target)
+        game.trace = []
+        sim.run(sim.Wired(target=target), game)
+        low = sum(ms for t, limit, _, ms, _ in game.trace
+                  if limit < 22 and game.place(t - ms / 1000.0)[0] is moment) / 1000.0
+        assert low <= 6.0, (seed, low)
 
 # ---- replay: recorded frames, whatever the governor asks -------------------------------------------------------------
 def test_replay_the_recorded_loss_gets_the_full_limit_within_a_second():

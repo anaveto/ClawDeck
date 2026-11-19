@@ -97,6 +97,7 @@ class Cfg:
     ceiling: int                    # your limit
     target: float                   # fps
     start_w: int | None = None      # where this game held last time; None: mid-range
+    most: bool = False              # no target set: the target is the screen's highest refresh rate
 
 
 @dataclass
@@ -322,8 +323,8 @@ def goal(st: State, cfg: Cfg) -> float:
 def _goal_at(ref: float | None, cfg: Cfg, noise: float) -> float:
     """... were `ref` what the full limit gives (a game that wobbles by itself: within its wobble, which a watch can't
     tell from the limit's)."""
-    if ref is not None and ref < cfg.target * REACHED:
-        return ref * (1 - max(SAME, noise))
+    if ref is not None and (ref < cfg.target * REACHED or cfg.most):
+        return min(ref, cfg.target) * (1 - max(SAME, min(noise, SUSTAINED)))
     return cfg.target * (1 - TOL)
 
 
@@ -338,8 +339,9 @@ def _need(st: State, cfg: Cfg) -> float:
 
 
 def out_of_reach(st: State, cfg: Cfg) -> bool:
-    """The full limit gives less than the target, so what it gives is held instead."""
-    return st.ref is not None and st.ref < cfg.target * REACHED
+    """The full limit gives less than the target, so what it gives is held instead (with no target set, also
+    where it gives the target: up to that)."""
+    return st.ref is not None and (cfg.most or st.ref < cfg.target * REACHED)
 
 
 def _take(st: State, pace: float) -> None:
@@ -505,7 +507,8 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
             st.free_fps.append(here)
         if len(st.free_fps) >= FREE_LOOKS:
             level = statistics.median(st.free_fps)
-            _take(st, level)
+            if free or st.lo is None or level >= st.lo or not out_of_reach(st, cfg):
+                _take(st, level)
             if free:
                 st.ref, st.ratio = level, 1.0
                 st.full_at = t if st.limit >= top else st.full_at
@@ -586,7 +589,7 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
         # three times the frames lost). Unless it gives what the full limit gives (the limit before, where that is
         # not known): nothing is lost to the limit then, whatever the rate (a game on its own frame limit with slow
         # frames of its own is under that line at every limit)
-        most = full or st.before
+        most = min(full or st.before or 0.0, cfg.target) if cfg.most else full or st.before
         line = want * (1 + CLEAR) if got is not None and most and got < most * (1 - wide) else want
         lost = quick or (got is not None and got < line * (1 - margin))
         if lost and cur < want * (1 - SHIFT) and st.prev < top and not st.retest:
@@ -635,7 +638,8 @@ def step(st: State, obs: Obs, cfg: Cfg) -> Action:
                 st.chain = 0
                 act.note = f"holding at {st.limit} W"
                 hold(AFTER_LOSS_S)
-            elif nxt is not None and _steady(st, t, clear):
+            elif nxt is not None and _steady(st, t, clear if want >= cfg.target * (1 - TOL) or (
+                    obs.draw_w is not None and obs.draw_w <= st.limit - 2) else min(clear, 2 * SUSTAINED)):
                 was, st.before, st.long = st.limit, held, _slow_before(st, nxt, scene, t)
                 st.typ = statistics.median(st.watch)
                 watch("probe", nxt, f"{was} W holds; trying {nxt} W")
@@ -826,7 +830,8 @@ def _next_down(st: State, obs: Obs, cfg: Cfg, t: float, ref: float | None) -> in
     just over what the package draws."""
     under = [w for w in st.fail if w < st.limit and _counts(st.fail[w], ref, t)]
     if (st.home is not None and st.home < st.limit - STEP_W and st.home_ref is not None and ref is not None
-            and _same(st.home_ref, ref) and all(w < st.home for w in under if _same(st.fail[w][2], ref))):
+            and _same(st.home_ref, ref)
+            and all(w < st.home for w in under if _same(st.fail[w][2], ref) or st.fail[w][1] >= 2)):
         nxt = st.home                                # (held in this scene: what failed over it failed in another)
     elif under:
         nxt = (st.limit + max(under) + 1) // 2
@@ -1005,10 +1010,17 @@ def _hold(st, obs, cfg, act, top, cur, pace_ms, here, clear, small, dippy, free,
                 st.lost, st.lost_slow = pace, 0.0
                 watch("check", top, f"checking what the full {top} W gives", "rise")
                 return act
+        if (settled and binds and st.free_w != st.limit and st.limit < top and not out_of_reach(st, cfg)
+                and (here / st.ratio if st.ratio else here) < cfg.target * REACHED * (1 - small)):
+            st.lost, st.lost_slow = here, 0.0
+            watch("check", top,
+                  f"{here:.1f} fps at {st.limit} W, under your target: checking what the full {top} W gives", "rise")
+            return act
         # the goal hangs on what the full limit gave (your target is out of reach), and that is CHECK_MAX_S old or
         # from before a menu: a scene that got lighter under a step, or another place that has this pace at this
         # limit, shows in no frame here
-        if (settled and binds and st.free_w != st.limit and st.limit < top - 1 and need < cfg.target * (1 - TOL)
+        if (settled and binds and st.free_w != st.limit and st.limit < top - 1
+                and (need < cfg.target * (1 - TOL) or st.full_at is None and here < cfg.target * REACHED)
                 and (st.full_at is None or t - st.full_at >= CHECK_MAX_S)):
             st.lost, st.lost_slow = here, 0.0
             watch("check", top, f"the full {top} W was not measured yet: checking what it gives" if st.full_at is None
@@ -1019,10 +1031,12 @@ def _hold(st, obs, cfg, act, top, cur, pace_ms, here, clear, small, dippy, free,
     # a step down: from a pace that is in the band, that the last frames agree with, in a scene that has stayed
     # (the scene a level held in for HOME_S is no new one: back in it, that level without the wait). It is judged
     # against the pace of the last STEADY_S (a pace of PACE_FRAMES has the game's wobble in it: against its high,
-    # steps that cost nothing failed)
+    # steps that cost nothing failed). Out of reach, at a limit the package draws all of, that pace is steady within
+    # 2 %: a game whose frame rate moves in a rhythm of its own lost 4.5 to 8.7 % of its frames to steps
     if (t >= st.quiet_until and t - st.changed_at >= AFTER_LOSS_S
             and st.scene_since is None and st.loss_since is None and st.lo is not None and not over
-            and abs(cur - here) <= clear * here and _steady(st, t, clear)):
+            and abs(cur - here) <= clear * here
+            and _steady(st, t, clear if ref >= cfg.target * REACHED or not binds else min(clear, 2 * SUSTAINED))):
         nxt = _next_down(st, obs, cfg, t, ref)
         if nxt is not None and (t - st.scene_at >= SCENE_S or (nxt == st.home and _same(st.home_ref, ref))):
             ms = [x for _, x in st.recent]
