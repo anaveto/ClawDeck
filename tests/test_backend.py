@@ -1102,19 +1102,6 @@ def test_never_picked_on_this_power_source_leaves_the_firmware_and_thermald(plug
     assert sysfs.read_int(p.hw.paths.rapl_pl1) == FW_PL1 and p.thermald["active"]
 
 
-def test_a_start_of_the_plugin_puts_your_pick_on_the_chip(plugin):
-    p = plugin
-    p.run(p.set_tdp(20))                                           # the slider in the menus, no game
-    p.run(p._unload())                                             # Decky restarts the plugin: everything reverted
-    assert sysfs.read_int(p.hw.paths.rapl_pl1) == FW_PL1 and p.thermald["active"]
-    p._holding_pick = False
-    p._apply_idle_pick(False)                                      # what _main does last
-    assert p.chip() == 20 and not p.thermald["active"] and p._holding_pick
-    p.ac["plugged"] = True
-    p.run(p.power_source_changed(True))                            # no pick on the charger: the firmware and thermald
-    assert sysfs.read_int(p.hw.paths.rapl_pl1) == FW_PL1 and p.thermald["active"]
-
-
 def test_status_shows_your_limit_and_what_autotune_uses(plugin):
     p = plugin
     p.settings["last_profile_battery"] = "max"                     # 35 W

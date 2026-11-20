@@ -171,9 +171,6 @@ class Plugin:
         self.diag = diaglog.DiagLog(os.path.join(LOG_DIR, "diag"), self.hw.paths, self.fan_hw, self.battery.plugged)
         self._diag_task: asyncio.Task | None = None
         self._ensure_diag()
-        # no game yet: your limit on the chip from the start, as after a game (a restart left the firmware's limits)
-        async with self._power_lock:
-            self._apply_idle_pick(bool(self.battery.plugged()))
 
     async def _first_fixes(self) -> None:
         """Fixes every Claw of that model needs, applied by themselves once (on install, and again after a system
