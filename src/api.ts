@@ -25,7 +25,7 @@ export type Hardware = { product: string; known: boolean; kernel: string; cpu_mo
 export type AutotuneStatus = { running: boolean; enabled: boolean; appid?: string; title?: string | null; learned?: any; paused?: boolean; no_frames?: boolean; own_pace?: string | null; own_pace_why?: string | null; game_fg?: number; last?: any;
   phase?: "hold" | "target"; step?: "hold" | "probe" | "back" | "recover" | "check" | null; target?: number | null; user_target?: number | null;
   unreachable?: boolean; best_fps?: number | null; floor_learned?: number | null; fg?: number; tdp?: number; ceiling_tdp?: number; floor_tdp?: number; saves_w?: number | null;
-  max_fps?: number | null; avg_fps?: number | null; low_fps?: number | null; fps_per_w?: number | null;
+  chip_w?: number | null; max_fps?: number | null; avg_fps?: number | null; low_fps?: number | null; fps_per_w?: number | null;
   source?: "rendered" | "presented" | "frame-gen pick"; multiplier?: number | null; window_s?: number;
   last_action?: string | null; last_delta?: string | null; last_change_s?: number | null; bound?: "gpu" | "cpu" | "balanced";
   thermal_cap?: number | null; thermal?: Thermal; learning?: boolean; pl1_window_s?: number | null; plugged?: boolean | null;

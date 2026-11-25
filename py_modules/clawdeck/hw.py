@@ -97,6 +97,7 @@ class Paths:
     gpu_rpe_freq: str | None = None      # efficient frequency
     gpu_rpn_freq: str | None = None      # hardware minimum
     gpu_power_profile: str | None = None # xe SLPC efficiency hint: "[base] power_saving" (findings §22.3)
+    gpu_throttle: str | None = None      # xe: freq0/throttle, where reason_pl1, _pl2 and _pl4 say a power limit holds the clock
     gpu_busy: str | None = None          # not exposed by xe; PowerStation's GpuBusyPercent is read instead (shadowblip.py)
     # CPU
     cpu_max_perf_pct: str | None = None
@@ -168,6 +169,8 @@ def discover_paths() -> Paths:
                 fp = f"{xe}/{name}"
                 if os.path.exists(fp):
                     setattr(p, f"gpu_{name}", fp)
+            if os.path.isdir(f"{xe}/throttle"):
+                p.gpu_throttle = f"{xe}/throttle"
             break
         if os.path.exists(f"{card}/gt_max_freq_mhz"):
             p.gpu_card = card

@@ -784,6 +784,9 @@ def test_gpu_power_profile_is_discovered_with_the_clock_files(tmp_path, monkeypa
     monkeypatch.setattr(hw.glob, "glob", lambda pat: [str(card)] if pat == "/sys/class/drm/card[0-9]" else
                         ([] if pat.startswith("/sys/") else real_glob(pat)))
     assert hw.discover_paths().gpu_power_profile == str(f0 / "power_profile")
+    assert hw.discover_paths().gpu_throttle is None
+    (f0 / "throttle").mkdir()
+    assert hw.discover_paths().gpu_throttle == str(f0 / "throttle")
     assert real_isdir(f0)
 
 
@@ -1589,6 +1592,95 @@ def test_autotune_takes_over_when_the_first_frames_come_late(fake_hw, monkeypatc
     at._step()
     assert s.paused and not s.no_frames                          # yours stays yours
     at.session = None
+
+
+class _Hold(_Game):
+    """A game at 32 W that the firmware holds at 10 W from `at_s` for `for_s`: 13 fps there, 57 outside."""
+    def __init__(self, at, at_s, for_s, reason=True, **kw):
+        super().__init__(at, lambda *_: 13.0, **kw)
+        self.began, self.over, self.reason = self.t + at_s, self.t + at_s + for_s, reason
+
+    def held(self):
+        return self.began <= self.t < self.over
+
+    def sample(self):
+        s = self.at.session
+        self.t += s.look_s
+        hold = self.held()
+        f = 13.0 if hold else 57.0 * min(1.0, s.learned.tdp / 29.0) ** 0.7
+        base = dict(gpu_mhz=1500, gpu_max_mhz=2400, cpu_pct=40, pkg_w=9.9 if hold else min(float(s.learned.tdp), 29.0),
+                    gpu_busy=95, source="presented", shown_fps=f, power_limited=self.reason if hold else False)
+        return autotune.Sample(t=self.t, frametime_ms=1000.0 / f, fps=f, **{**base, **self.smp})
+
+
+def test_autotune_waits_while_the_firmware_holds_the_chip_and_starts_over_after(fake_hw, monkeypatch):
+    """Claw 8 EX, 2026-11-25: after a resume the chip stayed at 10 W under a 32 W limit for 7 min, 13 to 24 fps, and
+    Autotune showed 32 of 32 W. Nothing is changed in the hold; after it nothing measured in it is left."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
+    g = _Hold(at, 60, 400)
+    g.run(60 + autotune.HELD_S + 1.0)
+    st = at.status()
+    assert st["chip_w"] == 10 and st["step"] is None and st["max_fps"] is None and st["avg_fps"] is None
+    limit = s.learned.tdp
+    writes = []
+    tdp = at._tdp
+    monkeypatch.setattr(at, "_tdp", lambda l, w, force=False: writes.append(w) or tdp(l, w, force))
+    total, gov = sum(s.gov.held_s.values()), s.gov
+    g.reason = False                                             # a second without the reason is not its end
+    g.run(1)
+    g.reason = True
+    g.run(1)
+    assert s.chip_held and s.gov is gov
+    g.run(388)
+    assert s.chip_held and s.learned.tdp == limit and writes == [] and sum(s.gov.held_s.values()) == total
+    held = gov.held_s
+    while s.chip_held and g.t < g.over + 60:
+        at._step()
+    assert g.over <= g.t < g.over + autotune.HELD_S + 1.0 and at.status()["chip_w"] is None
+    assert s.gov is not gov and not s.gov.fail                   # what it measured before the hold was seen is gone
+    assert s.gov.held_s is held                                  # ... but not where the game held before it
+    assert s.gov.ref is None or s.gov.ref > 40
+    g.run(30)
+    assert s.learned.max_fps > 50 and sum(s.gov.held_s.values()) > total and not s.gov.fail.get(10)
+    at.session = None
+
+
+@pytest.mark.parametrize("smp", [dict(pkg_w=30.0), dict(power_limited=False), dict(power_limited=None)],
+                         ids=["draws the limit", "no power-limit reason", "not readable"])
+def test_autotune_takes_only_a_hold_for_a_hold(fake_hw, monkeypatch, smp):
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
+    g = _Hold(at, 0, 1e9, **smp)
+    g.run(60)
+    assert not s.chip_held and at.status()["chip_w"] is None
+    at.session = None
+
+
+def test_autotune_takes_a_dip_of_two_seconds_and_a_pl2_of_the_user_for_no_hold(fake_hw, monkeypatch, tmp_path):
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
+    g = _Hold(at, 5, autotune.HELD_S - 1)
+    gov = s.gov
+    for _ in range(60):
+        g.run(1)
+        assert not s.chip_held and s.gov is gov
+    at.session = None
+    fake_hw.paths.rapl_pl2 = str(tmp_path / "pl2")               # PL2 set to 10 W by the user: the draw is no hold
+    _w(fake_hw.paths.rapl_pl2, 10_000_000)
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
+    _Hold(at, 5, 60).run(60)
+    assert not s.chip_held
+    at.session = None
+
+
+def test_the_sampler_reads_xes_power_limit_reasons(fake_hw, tmp_path):
+    d = tmp_path / "throttle"
+    for n in ("pl1", "pl2", "pl4"):
+        _w(str(d / f"reason_{n}"), 0)
+    smp = autotune.Sampler(fake_hw, "/nonexistent")
+    assert smp.power_limited() is None                           # no xe throttle directory
+    fake_hw.paths.gpu_throttle = str(d)
+    assert smp.power_limited() is False
+    _w(str(d / "reason_pl4"), 1)
+    assert smp.power_limited() is True
 
 
 def test_autotune_without_a_frame_rate_gives_back_the_limit_you_picked(fake_hw, monkeypatch):
