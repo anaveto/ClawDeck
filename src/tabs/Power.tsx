@@ -192,12 +192,13 @@ export const PowerTab: FC<{ quick?: boolean }> = ({ quick }) => {
     : at.no_frames ? "Autotune has no frame rate from this game, so your limit is on the chip; it takes over when frames come"
     : at.paused && at.why ? `Autotune: ${at.why}`
     : at.paused ? "Autotune paused in this game. Pick a profile or a target to hand back control"
+    : at.chip_w != null ? `Autotune waits: the firmware holds the chip at ${at.chip_w} W`
     : `Autotune on · ${fpsText}` + (at.fps_per_w ? ` · ${at.fps_per_w} fps/W` : "");
   // the live line under the slider: your limit (the slider) and what Autotune runs the chip at under it now
   const limitW = running ? (at?.ceiling_tdp ?? tdp) : null;
   const savesW = running && at?.tdp != null && limitW != null && limitW > at.tdp ? limitW - at.tdp : 0;
   const usingLine = running && at?.tdp != null
-    ? `Autotune: using ${at.tdp} W of your ${limitW} W` + (savesW ? ` · saves ${savesW} W` : "") +
+    ? at.chip_w != null ? `The firmware holds the chip at ${at.chip_w} W of your ${limitW} W` : `Autotune: using ${at.tdp} W of your ${limitW} W` + (savesW ? ` · saves ${savesW} W` : "") +
       ` · ${at.avg_fps != null ? `${Math.round(at.avg_fps)} fps` : "reading frames…"}` : null;
   const bound = at?.bound === "gpu" ? "GPU-bound" : at?.bound === "cpu" ? "CPU-bound" : "Balanced";
   const atDetail = running

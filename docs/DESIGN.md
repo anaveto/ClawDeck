@@ -309,6 +309,11 @@ governor's step, the goal, the frame generation multiplier, and in `note` what w
 change of the limit with its watts and the reason, a pause, a refused write), so a run on a device shows why the limit
 moved.
 
+The firmware can hold the chip at 10 W whatever the limit (Claw 8 EX, after a resume or a charger change; `HELD_S`). While
+xe says a power limit holds the GPU's clock and the package draws under 60 % of the limit, Autotune waits: no look is
+judged, the limit stays, the panel names the hold and its watts, and the log's step is `chip`. After it the governor
+starts over from the limit in use.
+
 What Autotune owns while it governs: PL1; PL2 at PL1 + 2 W, also over a PL2 set by hand (`Power.governed`; yours is back
 with your limit); the PL1 window at 8 s from the game's start to its end (RAPL averages PL1 over 56 s on the EX: for
 most of a minute after a change the package can run up to PL2, and a step down watched for 2.5 s would be judged on

@@ -66,6 +66,12 @@ MANGOAPP_FRESH_S = 30   # a mangoapp log written this recently is a live one
 # 2026-11-14): a limit that is just too low is a few slow frames, not a lower frame rate. The log gets them.
 SLOW = 1.10             # a frame this much longer than the pace is a slow one
 PACE_FRAMES = 60        # the pace: the median frame time of this many frames before
+# The firmware can hold the chip far under the limit on the chip: on the Claw 8 EX, 10 W under 32 W for up to 5 s at a
+# time after a charger change, and for 7 min after a resume from sleep (2026-11-19 and 2026-11-25), the RAPL limits
+# unchanged. A power limit then holds the GPU's clock (xe's reasons) while the package draws far less than the limit; in
+# 11 days of 1 Hz readings that was so for 2 s or longer only in such holds and under a PL2 of 10 W.
+HELD_SHARE = 0.6        # the package under this much of the limit
+HELD_S = 3.0            # ... for this long is a hold, and it ends when it has not been so for this long
 CSV_FIELDS = ["time", "appid", "phase", "fps", "shown_fps", "source", "gpu_mhz", "gpu_max_mhz", "cpu_pct", "pkg_w", "tdp",
               "cpu_max_pct", "gpu_min_mhz", "boost", "bound", "max_fps", "frames", "ft_median", "ft_p95", "slow_pct",
               "goal", "mult", "look_s", "note"]
@@ -92,6 +98,7 @@ class Sample:
     ft_median: float | None = None  # ... their median frame time, ms
     ft_p95: float | None = None     # ... the 95th percentile
     slow_pct: float | None = None   # ... and the share of them more than SLOW over the pace before (PACE_FRAMES)
+    power_limited: bool | None = None   # xe says a power limit holds the GPU's clock; None: not readable
 
 
 class Sampler:
@@ -363,6 +370,12 @@ class Sampler:
             self._busy_retry = now + 60
         return v
 
+    def power_limited(self) -> bool | None:
+        if not self.p.gpu_throttle:
+            return None
+        reasons = [sysfs.read_int(f"{self.p.gpu_throttle}/reason_{n}") for n in ("pl1", "pl2", "pl4")]
+        return None if all(v is None for v in reasons) else any(reasons)
+
     def sample(self) -> Sample:
         ft, shown = self.frametime()
         stats = frame_stats(self.frames_ms, statistics.median(self._pace) if self._pace else None)
@@ -375,7 +388,7 @@ class Sampler:
                       gpu_max_mhz=sysfs.read_int(self.p.gpu_max_freq) if self.p.gpu_max_freq else None,
                       cpu_pct=self.cpu_pct(), pkg_w=self.package_power(), gpu_busy=self.gpu_busy(),
                       shown_fps=shown, source=src, frames=len(self.frames_ms) if stats else None,
-                      ft_median=median, ft_p95=p95, slow_pct=slow)
+                      ft_median=median, ft_p95=p95, slow_pct=slow, power_limited=self.power_limited())
 
 
 def frame_stats(frames_ms: list[float], pace_ms: float | None = None) -> tuple[float, float, float] | None:
@@ -552,6 +565,9 @@ class Session:
     mult_seen: float | None = None      # the XeLL line it was last taken at, and the shown frames since
     mult_n: int = 0
     mult_ms: float = 0.0
+    low_from: float | None = None       # since when the chip is held under the limit, when it last was, and whether
+    low_at: float | None = None         # that is a hold (HELD_S)
+    chip_held: bool = False
     refused: bool = False               # the last TDP write was not applied ...
     refused_until: float = -1e9         # ... and until then no other is tried (the governor rests)
     user_target: int = 0
@@ -888,6 +904,9 @@ class Autotune:
         if s.paused or s.gov is None or smp.t < s.refused_until:
             s.look_s = 1.0
             return
+        if self._chip_held(s, smp):
+            s.look_s = governor.LOOK_S
+            return
         l = s.learned
         # frame generation: the governor judges rendered frames. XeLL's figure when the game has it, else ClawDeck's
         # multiplier for the game; a change of it is another game as far as the frames go
@@ -932,6 +951,33 @@ class Autotune:
         l.target_eff = s.target
         if not s.settled and sum(s.gov.held_s.values()) >= 60:
             s.settled = True                             # a minute of holding: worth saving for the game
+
+    def _chip_held(self, s: Session, smp: Sample) -> bool:
+        """The firmware holds the chip far under the limit: no frame says anything of a limit, so nothing is judged or
+        changed. At its end the governor starts over from the limit in use: what it measured since the hold began (the
+        first HELD_S) was the hold's."""
+        pl2 = sysfs.read_int(self.hw.paths.rapl_pl2) if self.hw.paths.rapl_pl2 else None
+        limit = s.learned.tdp if not pl2 else min(s.learned.tdp, pl2 / 1_000_000)
+        if smp.power_limited and smp.pkg_w is not None and smp.pkg_w < HELD_SHARE * limit:
+            s.low_at = smp.t
+            s.low_from = smp.t if s.low_from is None else s.low_from
+        elif s.low_at is None or smp.t - s.low_at >= HELD_S:
+            s.low_from = None
+        held = s.low_from is not None and s.low_at - s.low_from >= HELD_S
+        if held and not s.chip_held:
+            s.avg_fps = s.low_fps = s.fps_per_w = None
+            s.learned.fps = s.learned.max_fps = None
+            log.info("autotune: the firmware holds the chip at %.0f W under the %d W limit: nothing changed until it ends",
+                     smp.pkg_w, s.learned.tdp)
+            self._note(s, f"held: the firmware holds the chip at {smp.pkg_w:.0f} W under the {s.learned.tdp} W limit")
+        elif s.chip_held and not held:
+            log.info("autotune: the firmware's hold is over: it starts over from %d W", s.learned.tdp)
+            kept = s.gov.held_s
+            self._govern_from(s, s.learned.tdp)
+            s.gov.held_s = kept
+            self._note(s, "held: over")
+        s.chip_held = held
+        return held
 
     def _multiplier(self, s: Session, smp: Sample) -> float:
         """Shown frames per rendered frame, for the governor: a whole number that changes rarely. XeLL writes its
@@ -1021,11 +1067,13 @@ class Autotune:
                     s.row_before.extend(s.row_ms)
                     s.row_ms = []
                 fps = shown if smp.source != "rendered" and shown else smp.fps      # rendered: XeLL's own figure
-                w.writerow([f"{smp.t:.1f}", s.appid, s.gov.mode if s.gov and not s.paused else "out", r(fps, 1),
+                w.writerow([f"{smp.t:.1f}", s.appid,
+                            "out" if s.paused or not s.gov else "chip" if s.chip_held else s.gov.mode, r(fps, 1),
                             r(shown, 1), smp.source, smp.gpu_mhz, smp.gpu_max_mhz, r(smp.cpu_pct, 1),
-                            r(smp.pkg_w, 2), l.tdp, l.cpu_max_pct, l.gpu_min_mhz, int(l.boost), l.bound, r(l.max_fps, 1),
+                            r(smp.pkg_w, 2), l.tdp, l.cpu_max_pct, l.gpu_min_mhz, int(l.boost), l.bound,
+                            None if s.paused or s.chip_held else r(l.max_fps, 1),
                             frames[0], r(frames[1], 2), r(frames[2], 2), r(frames[3], 1),
-                            r(governor.goal(s.gov, s.cfg), 1) if s.gov and s.cfg and not s.paused else None,
+                            r(governor.goal(s.gov, s.cfg), 1) if s.gov and s.cfg and not s.paused and not s.chip_held else None,
                             s.multiplier, s.look_s, " | ".join(s.notes)])
                 s.notes.clear()
         except OSError:
@@ -1038,7 +1086,7 @@ class Autotune:
         l = s.learned
         last = s.history[-1] if s.history else None
         r = lambda v: None if v is None else round(v, 1)
-        governing = not s.paused and s.gov is not None
+        governing = not s.paused and s.gov is not None and not s.chip_held
         return {"running": True, "enabled": self.enabled, "appid": s.appid, "paused": s.paused, "phase": s.phase,
                 "step": s.gov.mode if governing else None,
                 "learned": l.__dict__, "bound": l.bound, "tdp": l.tdp, "ceiling_tdp": s.ceiling_tdp,
@@ -1047,6 +1095,7 @@ class Autotune:
                 "max_fps": r(l.max_fps), "avg_fps": r(s.avg_fps), "low_fps": r(s.low_fps),
                 "fps_per_w": None if s.fps_per_w is None else round(s.fps_per_w, 2), "source": s.source,
                 "multiplier": s.multiplier, "window_s": governor.DWELL_S, "thermal_cap": s.thermal_cap,
+                "chip_w": round(last.pkg_w) if s.chip_held and not s.paused and last and last.pkg_w is not None else None,
                 "no_frames": s.no_frames, "own_pace": s.own_pace, "own_pace_why": OWN_PACE.get(s.own_pace or ""),
                 "learning": governing and not s.settled,
                 "pl1_window_s": None if self.power.pl1_window_us() is None else round(self.power.pl1_window_us() / 1e6, 1),
