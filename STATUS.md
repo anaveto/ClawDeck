@@ -205,6 +205,17 @@ Sinking Star got Enshrouded's fps), and it looked for a new log only every 30 s.
 started counts, looked for every second until it appears. Check on the EX: autotune on, play one game, then start
 another and restart the plugin: the status line shows the second game's fps, never the first one's.
 
+**Autotune waits while the firmware holds the chip, and governs a game it is switched on in (2026-11-26):** after a
+resume the firmware held the chip at 10 W under a 32 W limit for 7 min (Claw 8 EX, 2026-11-25), and Autotune took the
+hold's frames for the game's. Now, while xe says a power limit holds the GPU's clock and the package draws under 60 %
+of the limit, nothing is judged or changed and the Power line says "Autotune waits: the firmware holds the chip at
+10 W"; after it the governor starts over from the limit in use. Switched on in a running game, Autotune now governs it
+at once (it waited for the next start); a lever set under Advanced and the temperature guard's step stay. Check on the
+EX: a game governed on battery, the charger in and out: if the package stays under 60 % of the limit for 3 s, the
+Power line names the hold and `autotune.csv` has phase `chip`, with no limit change. Then a game launched with Autotune
+off, boost off under Advanced, Autotune switched on: the Power line shows Autotune's watts within a minute, and boost
+stays off.
+
 **A paused Autotune gives its changes back (2026-11-15):** switching Autotune off in a game, or one manual change under
 Advanced, only set a flag: Autotune's own TDP, CPU ceiling, boost and GPU floor stayed on the chip until the game
 ended (a 60 fps target met: 9 W of a 30 W pick, also after the switch). Now the pick goes back at once (TDP, PL2, the
