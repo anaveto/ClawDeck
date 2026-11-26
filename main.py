@@ -847,6 +847,8 @@ class Plugin:
                                 fg=self._game_fg(frontend.steam_appid(appid)), at_limit=picked, held=held)
             if step is not None:
                 self.autotune.thermal_step(step)
+            if keep and self.guard.clock_pct is not None:
+                self.autotune.thermal_clock(self.guard.clock_pct)
             result["autotune"] = "started"
             quiet.background(True)                       # autotune's loop: on the E-cores, low priority, away from the game
         self._held_or_release(result)
