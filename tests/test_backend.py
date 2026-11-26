@@ -1769,9 +1769,9 @@ def test_switching_autotune_off_in_a_hot_game_keeps_the_guards_step_and_the_guar
         p.run(p.game_stopped(appid))
 
 
-def test_a_tdp_pick_in_a_game_autotune_was_switched_on_in_is_the_limit(plugin):
-    """Autotune switched on while a game runs does not govern that game, and the panel shows the TDP slider as the
-    limit: a pick there is the limit at once, also with a maximum of Autotune's own. The next start is governed."""
+def test_autotune_switched_on_in_a_game_governs_it_at_once_under_its_limit(plugin):
+    """Autotune switched on while a game runs governs that game from then on, under Autotune's maximum or, without
+    one, the TDP setting. It waited for the game's next start."""
     p = plugin
     for appid, own in (("7", None), ("8", 20), ("9", 30)):
         p.run(p.set_setting("autotune", False))
@@ -1780,15 +1780,41 @@ def test_a_tdp_pick_in_a_game_autotune_was_switched_on_in_is_the_limit(plugin):
         p.run(p.game_started(appid))
         assert p.chip() == 26 and p.autotune.session is None
         p.run(p.set_setting("autotune", True))
-        assert not p.run(p.get_power())["autotune_governs"] and p.chip() == 26
-        assert p.run(p.set_tdp(28))["ok"]
-        assert p.chip() == 28 and p.autotune.session is None and not p.run(p.get_power())["autotune_governs"]
-        p.run(p.set_autotune_max(18))                                  # not this game's limit: nothing starts over
-        assert p.chip() == 28 and p.autotune.session is None
+        s = p.autotune.session
+        assert s is not None and not s.paused and s.ceiling_tdp == (own or 26) and p.run(p.get_power())["autotune_governs"]
         p.run(p.game_stopped(appid))
-        p.run(p.game_started(appid))
-        assert p.autotune.session is not None and p.autotune.session.ceiling_tdp == 18
-        p.run(p.game_stopped(appid))
+
+
+@pytest.mark.parametrize("source", ["mangoapp", "own log", "none"])
+def test_autotune_switched_on_in_a_running_game_takes_the_frames_there_are(plugin, tmp_path, monkeypatch, source):
+    """Launched with Autotune off, switched on in the game: its frames are mangoapp's log of the running game, else
+    the game's own MangoHud log; with neither, your limit goes back on the chip after NO_FPS_S, as after a launch."""
+    p = plugin
+    monkeypatch.setattr(autotune, "mangoapp_command", lambda c: True)
+    p.settings["autotune"] = p.autotune.enabled = False
+    assert p.run(p.set_tdp(26))["ok"]
+    p.run(p.game_started("7"))
+    smp = p.autotune.sampler
+    smp.home, smp.log_dir = str(tmp_path), str(tmp_path / "mangohud")
+    os.makedirs(smp.log_dir)
+    live, own = tmp_path / "mangoapp_2026-11-26_15-00-00.csv", tmp_path / "mangohud" / "game_2026-11-26_15-00-00.csv"
+    if source == "mangoapp":
+        _mango_rows(live, [33.3] * 30, header=True)                       # before the switch: not Autotune's frames
+    if source == "own log":
+        own.write_text("os\nLinux\nfps,frametime\n60.0,16.6\n")
+    p.run(p.set_setting("autotune", True))
+    s = p.autotune.session
+    assert s is not None and not s.paused and p.run(p.get_power())["autotune_governs"]
+    if source == "none":
+        _Game(p.autotune, lambda *_: None).run(autotune.NO_FPS_S + 1)
+        assert s.paused and s.no_frames and p.chip() == 26
+        return
+    if source == "mangoapp":
+        assert smp.frametime() == (None, None)
+        _mango_rows(live, [16.0, 17.0])
+        assert [round(v, 1) for v in smp.frametime()] == [16.5, 60.6]
+    else:
+        assert smp.frametime() == (16.6, 60.0)
 
 
 def test_switching_autotune_off_in_a_game_keeps_the_start_level_where_the_game_held(plugin):
@@ -1810,27 +1836,21 @@ def test_switching_autotune_off_in_a_game_keeps_the_start_level_where_the_game_h
     assert saved.get("ceiling") == 25 and saved.get("start") == held, saved
 
 
-@pytest.mark.parametrize("state", ["switched on in the game", "unplugged, not yet reported"])
 @pytest.mark.parametrize("setting, own", [(26, 15), (14, 25)])
 def test_the_guard_in_a_game_autotune_does_not_govern_steps_back_up_to_the_limit_on_the_chip(plugin, tmp_path, setting,
-                                                                                             own, state):
-    """No session: Autotune switched on during the game, or the game on the charger with "Autotune on the charger"
-    off and the charger pulled before Steam reports it. The guard gives the watts back up to the TDP setting on the
+                                                                                             own):
+    """No session: the game on the charger with "Autotune on the charger" off and the charger pulled before Steam
+    reports it. The guard gives the watts back up to the TDP setting on the
     chip, not to Autotune's maximum; the TDP slider is not greyed."""
     p = plugin
     t = tmp_path / "pkg_temp"
     p.guard = thermal.Guard(str(t), "x86_pkg_temp")
-    p.settings["autotune"] = state != "switched on in the game"
-    p.autotune.enabled = p.settings["autotune"]
     p.settings["autotune_plugged"] = False
     for plugged in (False, True):
         p.ac["plugged"] = plugged
         assert p.run(p.set_tdp(setting))["ok"]
-    p.ac["plugged"] = state != "switched on in the game"
     p.run(p.set_autotune_max(own))
     p.run(p.game_started("7"))
-    if state == "switched on in the game":
-        p.run(p.set_setting("autotune", True))
     p.ac["plugged"] = False
     assert p.autotune.session is None and p.chip() == setting
     assert not p.run(p.get_power())["autotune_governs"]
@@ -1862,10 +1882,9 @@ def test_switching_autotune_off_in_a_hot_game_it_does_not_govern_keeps_the_guard
     assert p.chip() == stepped
 
 
-def test_a_new_target_in_a_game_autotune_was_switched_back_on_in_does_not_govern_it(plugin):
-    """TDP setting 26 W, Autotune's maximum 15 W. In a game: Autotune switched off, then on again (the game is not
-    governed until its next start), then a new target. The session stays paused at the TDP setting; it governed
-    again, with 26 W as its ceiling."""
+def test_a_new_target_in_a_game_autotune_was_switched_back_on_in_governs_it_under_autotunes_maximum(plugin):
+    """TDP setting 26 W, Autotune's maximum 15 W. In a game: Autotune switched off, then on again, then a new target.
+    The game is governed under 15 W; once, it governed with 26 W as its ceiling."""
     p = plugin
     p.run(p.set_setting("autotune", True))
     assert p.run(p.set_tdp(26))["ok"]
@@ -1880,19 +1899,19 @@ def test_a_new_target_in_a_game_autotune_was_switched_back_on_in_does_not_govern
     for _ in range(100):
         p.autotune._step()
         seen.append(p.chip())
-    assert s.paused and set(seen) == {26}, (s.paused, sorted(set(seen)))
+    assert not s.paused and max(seen) <= 15, (s.paused, sorted(set(seen)))
 
 
 def test_an_esde_game_started_after_autotune_was_switched_on_is_governed(plugin):
-    """ES-DE launched with Autotune off; Autotune switched on in ES-DE's menus (not governed: no frame log there);
-    then a game from ES-DE. It starts after the switch: governed. It never was, until ES-DE itself was started again."""
+    """ES-DE launched with Autotune off; Autotune switched on in ES-DE's menus (governed from then on); then a game from
+    ES-DE: governed. It never was, until ES-DE itself was started again."""
     p = plugin
     p.settings["autotune"] = False
     p.autotune.enabled = False
     assert p.run(p.set_tdp(26))["ok"]
     p.run(p.game_started("100"))
     p.run(p.set_setting("autotune", True))
-    assert p.autotune.session is None
+    assert p.autotune.session is not None
     _frontend_event(p, "start", "ps2", "/roms/ps2/a.iso", "Game A")
     assert p.autotune.session is not None and p.run(p.get_power())["autotune_governs"]
 
@@ -1935,9 +1954,9 @@ def test_the_charger_switch_in_a_game_leaves_autotune_on_battery_as_it_was(plugi
     assert s is not None and not s.paused and p.chip() < 26, (s is not None and s.paused, p.chip())
 
 
-def test_the_charger_switch_off_keeps_a_game_autotune_was_switched_on_in_ungoverned(plugin):
-    """Autotune switched on during the game (no frame log), on the charger; "Autotune on the charger" switched off,
-    then unplugged: the game stays ungoverned on battery, as before the charger switch."""
+def test_a_game_autotune_was_switched_on_in_is_governed_on_battery_after_the_charger_switch_off(plugin):
+    """Autotune switched on during the game, on the charger; "Autotune on the charger" switched off, then unplugged:
+    the game is governed on battery."""
     p = plugin
     p.ac["plugged"] = True
     p.settings["autotune"] = False
@@ -1949,7 +1968,7 @@ def test_the_charger_switch_off_keeps_a_game_autotune_was_switched_on_in_ungover
     p.run(p.set_setting("autotune_plugged", False))
     p.ac["plugged"] = False
     p.run(p.power_source_changed(False))
-    assert p.autotune.session is None and not p.run(p.get_power())["autotune_governs"], p.chip()
+    assert p.autotune.session is not None and p.run(p.get_power())["autotune_governs"], p.chip()
 
 
 def test_a_new_target_after_the_charger_switch_off_does_not_govern_on_the_charger(plugin):
@@ -1968,9 +1987,9 @@ def test_a_new_target_after_the_charger_switch_off_does_not_govern_on_the_charge
     assert p.chip() == 26 and not p.run(p.get_power())["autotune_governs"], p.chip()
 
 
-def test_a_game_autotune_was_switched_off_and_on_in_says_why_it_is_not_governed(plugin):
-    """Autotune switched off and on in a game: the session stays paused and the game is not governed until its next
-    start. The panel gets the reason; it showed "paused: pick a profile or a target", and neither hands it back."""
+def test_a_game_autotune_was_switched_off_and_on_in_is_governed_again(plugin):
+    """Autotune switched off and on in a game: it governs the game again at once. It waited for the game's next start
+    ("turned on during this game: restart the game and it starts")."""
     p = plugin
     p.run(p.set_setting("autotune", True))
     p.run(p.game_started("7"))
@@ -1978,12 +1997,12 @@ def test_a_game_autotune_was_switched_off_and_on_in_says_why_it_is_not_governed(
     p.run(p.set_setting("autotune", False))
     p.run(p.set_setting("autotune", True))
     at = p.run(p.get_autotune())
-    assert at.get("paused") and at.get("why") == "turned on during this game: restart the game and it starts", at.get("why")
+    assert at.get("running") and not at.get("paused") and not at.get("why"), at.get("why")
 
 
-def test_the_charger_switch_on_keeps_a_game_autotune_was_switched_on_in_ungoverned(plugin):
-    """On the charger, "Autotune on the charger" off; Autotune switched on during the game (no frame log), then the
-    charger switch on: the game stays at the TDP setting."""
+def test_the_charger_switch_on_governs_a_game_autotune_was_switched_on_in(plugin):
+    """On the charger, "Autotune on the charger" off; Autotune switched on during the game (the TDP setting stays: off
+    on the charger), then the charger switch on: the game is governed."""
     p = plugin
     p.ac["plugged"] = True
     p.settings["autotune"] = False
@@ -1992,8 +2011,9 @@ def test_the_charger_switch_on_keeps_a_game_autotune_was_switched_on_in_ungovern
     assert p.run(p.set_tdp(26))["ok"]
     p.run(p.game_started("7"))
     p.run(p.set_setting("autotune", True))
-    p.run(p.set_setting("autotune_plugged", True))
     assert p.autotune.session is None and p.chip() == 26 and not p.run(p.get_power())["autotune_governs"]
+    p.run(p.set_setting("autotune_plugged", True))
+    assert p.autotune.session is not None and p.run(p.get_power())["autotune_governs"]
 
 
 def test_a_manual_lever_in_a_governed_game_keeps_the_paused_line(plugin):
@@ -2053,9 +2073,9 @@ def test_the_charger_switch_set_to_the_value_it_has_changes_nothing(plugin, paus
 @pytest.mark.parametrize("state", ["governed", "switched on in the game", "switched off in the game"])
 def test_the_autotune_switch_set_to_the_value_it_has_changes_nothing(plugin, state):
     """The panel sends the Autotune switch again with the value it has (a second copy of the panel), then a new target
-    and a resume from sleep: a governed game takes the target and is governed again, a game Autotune was switched on
-    in stays at the TDP setting, one it was switched off in keeps the limit set since. A governed game got the mark of
-    Autotune switched on in it, ignored the target and stayed at the TDP setting after the resume."""
+    and a resume from sleep: a governed game and one Autotune was switched on in take the target and are governed
+    again, one it was switched off in keeps the limit set since. A governed game got the mark of Autotune switched on
+    in it, ignored the target and stayed at the TDP setting after the resume."""
     p = plugin
     p.ac["plugged"] = False
     p.settings["autotune"] = p.autotune.enabled = state != "switched on in the game"
@@ -2073,11 +2093,8 @@ def test_the_autotune_switch_set_to_the_value_it_has_changes_nothing(plugin, sta
     p.run(p.set_autotune_target(45))
     p.run(p.resumed())
     s = p.autotune.session
-    if state == "governed":
-        _Game(p.autotune, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(60)
-        assert s is not None and not s.paused and s.user_target == 45 and p.chip() < 26, p.chip()
-    else:
-        assert s is None and p.chip() == 26 and not p.run(p.get_power())["autotune_governs"], p.chip()
+    _Game(p.autotune, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(60)
+    assert s is not None and not s.paused and s.user_target == 45 and p.chip() < 26, p.chip()
 
 
 @pytest.mark.parametrize("plugged", [False, True])
@@ -2370,8 +2387,8 @@ def test_the_panel_gets_the_screens_highest_refresh_rate_for_the_target_list(plu
 
 
 def test_an_esde_game_started_again_after_the_switch_is_governed(plugin):
-    """Autotune switched on while a game from ES-DE ran; the game ends and ES-DE starts it again: the new run is
-    governed, as any game ES-DE starts after the switch. It stayed at the TDP setting for good."""
+    """Autotune switched on while a game from ES-DE ran (governed from then on); the game ends and ES-DE starts it
+    again: the new run is governed too. It stayed at the TDP setting for good."""
     p = plugin
     p.settings["autotune"] = False
     p.autotune.enabled = False
@@ -2379,17 +2396,17 @@ def test_an_esde_game_started_again_after_the_switch_is_governed(plugin):
     p.run(p.game_started("100"))
     _frontend_event(p, "start", "ps2", "/roms/ps2/a.iso", "Game A")
     p.run(p.set_setting("autotune", True))
-    assert p.autotune.session is None
+    assert p.autotune.session is not None
     _frontend_event(p, "end", "ps2", "/roms/ps2/a.iso", "Game A")
     _frontend_event(p, "start", "ps2", "/roms/ps2/a.iso", "Game A")
     assert p.autotune.session is not None and p.run(p.get_power())["autotune_governs"]
 
 
 @pytest.mark.parametrize("during", ["menus", "game"])
-def test_esde_menus_after_its_game_are_not_governed_when_autotune_came_on_in_esde(plugin, during):
+def test_esde_menus_after_its_game_are_governed_when_autotune_came_on_in_esde(plugin, during):
     """ES-DE launched with Autotune off (its menus keep the TDP setting, 26 W); Autotune switched on in ES-DE's menus
-    or in one of its games, Autotune's maximum 15 W. After that game ends ES-DE's menus are as before: not governed,
-    the TDP setting on the chip. They were governed under 15 W."""
+    or in one of its games, Autotune's maximum 15 W. After that game ends ES-DE's menus are governed under 15 W, as
+    after a launch with Autotune on."""
     p = plugin
     p.settings["autotune"] = False
     p.autotune.enabled = False
@@ -2403,7 +2420,7 @@ def test_esde_menus_after_its_game_are_not_governed_when_autotune_came_on_in_esd
     p.run(p.set_autotune_max(15))
     _frontend_event(p, "end", "ps2", "/roms/ps2/a.iso", "Game A")
     assert p.running_key == "100"
-    assert p.autotune.session is None and p.chip() == 26, (p.autotune.session is not None, p.chip())
+    assert p.autotune.session is not None and p.chip() <= 15, (p.autotune.session is not None, p.chip())
 
 
 def test_xemu_from_an_appimage_is_found_though_its_process_is_called_apprun(tmp_path):
