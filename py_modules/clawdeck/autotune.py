@@ -73,6 +73,7 @@ PACE_FRAMES = 60        # the pace: the median frame time of this many frames be
 # 11 days of 1 Hz readings that was so for 2 s or longer only in such holds and under a PL2 of 10 W.
 HELD_SHARE = 0.6        # the package under this much of the limit
 HELD_S = 3.0            # ... for this long is a hold, and it ends when it has not been so for this long
+HELD_BACK = 0.8         # ... or at once at a reading of this much of the limit or more
 CSV_FIELDS = ["time", "appid", "phase", "fps", "shown_fps", "source", "gpu_mhz", "gpu_max_mhz", "cpu_pct", "pkg_w", "tdp",
               "cpu_max_pct", "gpu_min_mhz", "boost", "bound", "max_fps", "frames", "ft_median", "ft_p95", "slow_pct",
               "goal", "mult", "look_s", "note"]
@@ -961,7 +962,7 @@ class Autotune:
         if smp.power_limited and smp.pkg_w is not None and smp.pkg_w < HELD_SHARE * s.learned.tdp:
             s.low_from = smp.t if s.low_from is None or smp.t - s.low_at >= HELD_S else s.low_from
             s.low_at, s.low_w = smp.t, smp.pkg_w
-        elif s.low_at is None or smp.t - s.low_at >= HELD_S:
+        elif s.low_at is None or smp.t - s.low_at >= HELD_S or (smp.pkg_w or 0) >= HELD_BACK * s.learned.tdp:
             s.low_from = None
         held = s.low_from is not None and s.low_at - s.low_from >= HELD_S
         if held and not s.chip_held:
