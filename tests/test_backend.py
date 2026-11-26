@@ -1594,6 +1594,21 @@ def test_autotune_takes_over_when_the_first_frames_come_late(fake_hw, monkeypatc
     at.session = None
 
 
+def test_the_toast_after_a_game_that_ends_in_a_hold_says_what_was_saved(plugin):
+    """A settled game that ends in the firmware's hold: its record is saved, and the toast says so, without the hold's
+    frames. It said "nothing new saved"."""
+    p = plugin
+    p.ac["plugged"] = False
+    assert p.run(p.set_tdp(32))["ok"]
+    p.run(p.game_started("7"))
+    s = p.autotune.session
+    _Hold(p.autotune, 120, 400).run(130)
+    assert s.chip_held and s.settled
+    r = p.run(p.game_stopped("7"))
+    assert "learned" in p.profiles.own("7", False)
+    assert r["learned"]["summary"].startswith("Autotune held ") and "fps" not in r["learned"]["summary"], r["learned"]
+
+
 class _Hold(_Game):
     """A game at 32 W that the firmware holds at 10 W from `at_s` for `for_s`: 13 fps there, 57 outside."""
     def __init__(self, at, at_s, for_s, reason=True, **kw):

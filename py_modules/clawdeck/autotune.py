@@ -418,12 +418,12 @@ def mangoapp_command(cmd: str) -> bool:
 def summary(s: Session) -> str:
     """One line for the toast at game exit: what autotune found, or that it didn't get far enough to save it."""
     l = s.learned
-    if not s.settled or not (l.fps or l.max_fps):
+    if not s.settled:
         return "Autotune was still learning; nothing new saved. It goes on next time."
     fps = l.fps or l.max_fps
     use = l.start if l.start is not None else l.tdp
     saved = (l.ceiling or s.ceiling_tdp) - use
-    return (f"Autotune held {fps:.0f} fps with {use} W of your {l.ceiling or s.ceiling_tdp} W"
+    return ("Autotune held " + (f"{fps:.0f} fps with " if fps else "") + f"{use} W of your {l.ceiling or s.ceiling_tdp} W"
             + (f", saves {saved} W" if saved > 0 else ""))
 
 
