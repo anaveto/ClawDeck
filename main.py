@@ -459,8 +459,10 @@ class Plugin:
         if key == "autotune" and value and not was and self.running_appid is not None:
             # switched on while a game runs: it starts in the game, on mangoapp's frames (any running game has them)
             async with self._power_lock:
-                self._save_learned(self._game_key(), bool(self.running_plugged))
-                self._restart_game_power(self._game_key(), self._plugged())
+                plugged = self._plugged()
+                if self._autotune_governs(self._pick(self._game_key(), plugged)["prof"], plugged):
+                    self._save_learned(self._game_key(), bool(self.running_plugged))
+                    self._start_game_power(self._game_key(), plugged, keep=True)
         if key in ("autotune", "autotune_plugged") and self.running_appid is None and self.settings.get("autotune_max"):
             async with self._power_lock:
                 self._apply_idle_pick(bool(self.battery.plugged()))
@@ -820,13 +822,18 @@ class Plugin:
             return key
         return frontend.steam_appid(key)
 
-    def _start_game_power(self, appid: str, plugged: bool, picked: bool = False, held: int | None = None) -> dict:
+    def _start_game_power(self, appid: str, plugged: bool, picked: bool = False, held: int | None = None,
+                          keep: bool = False) -> dict:
         pk = self._pick(appid, plugged)
         prof = pk["prof"]
-        self._guard_reset()
+        step = self.guard.stepped_w if keep else None
+        if not keep:
+            self._guard_reset()
         self._pl2_for(pk, plugged)
         governs = self._autotune_governs(prof, plugged)
-        result = self.power.apply_profile(pk["apply"], self._limit_overrides(pk, plugged), plugged)
+        lim = self._limit_overrides(pk, plugged)
+        result = self.power.apply_profile("" if keep else pk["apply"], {"tdp": lim.get("tdp", pk["tdp"])} if keep else lim,
+                                          plugged)
         result["limit_w"] = result["applied"].get("tdp")
         if governs:
             # that limit is the set TDP autotune measures at and works under; its floor is the model minimum or the
@@ -838,6 +845,8 @@ class Plugin:
                                 xell_log=os.path.join(xess.prefix_dir(HOME, frontend.steam_appid(appid)), "igdext_xell.log"),
                                 target=int(self.settings.get("autotune_target") or 0) or None,
                                 fg=self._game_fg(frontend.steam_appid(appid)), at_limit=picked, held=held)
+            if step is not None:
+                self.autotune.thermal_step(step)
             result["autotune"] = "started"
             quiet.background(True)                       # autotune's loop: on the E-cores, low priority, away from the game
         self._held_or_release(result)
