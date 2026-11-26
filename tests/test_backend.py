@@ -1785,6 +1785,67 @@ def test_autotune_switched_on_in_a_game_governs_it_at_once_under_its_limit(plugi
         p.run(p.game_stopped(appid))
 
 
+@pytest.mark.parametrize("lever", ["boost off", "CPU ceiling 70 %"])
+@pytest.mark.parametrize("before", ["launched with Autotune off", "governed, then Autotune switched off"])
+def test_autotune_switched_on_in_a_game_keeps_a_lever_set_by_hand(plugin, lever, before):
+    """A lever set under Advanced before Autotune is switched on in the game stays: the switch-on starts Autotune, it
+    is not a pick. It went back to the pick's (boost on, CPU 100 %)."""
+    p = plugin
+    p.ac["plugged"] = False
+    assert p.run(p.set_tdp(26))["ok"]
+    if before == "launched with Autotune off":
+        p.settings["autotune"] = p.autotune.enabled = False
+        p.run(p.game_started("7"))
+    else:
+        p.run(p.game_started("7"))
+        _Game(p.autotune, lambda tdp, *_: min(60.0, 4.0 * tdp)).run(30)
+    if lever == "boost off":
+        p.run(p.set_cpu_turbo(False))
+    else:
+        p.run(p.set_cpu_max_pct(70))
+    if before != "launched with Autotune off":
+        p.run(p.set_setting("autotune", False))
+    read = lambda: p.power.turbo() if lever == "boost off" else p.power.status()["cpu"]["max_perf_pct"]
+    want = read()
+    p.run(p.set_setting("autotune", True))
+    assert p.autotune.session is not None and not p.autotune.session.paused and read() == want, read()
+
+
+@pytest.mark.parametrize("where", ["charger, Autotune on the charger off", "Autotune off for this game"])
+def test_autotune_switched_on_in_a_game_it_does_not_govern_changes_nothing(plugin, where):
+    p = plugin
+    p.ac["plugged"] = where.startswith("charger")
+    p.settings["autotune_plugged"] = False
+    p.settings["autotune"] = p.autotune.enabled = False
+    assert p.run(p.set_tdp(26))["ok"]
+    if where == "Autotune off for this game":
+        p.profiles.set("7", False, {"autotune": False})
+    p.run(p.game_started("7"))
+    p.run(p.set_cpu_turbo(False))
+    p.run(p.set_setting("autotune", True))
+    assert p.autotune.session is None and p.power.turbo() is False and p.chip() == 26
+
+
+@pytest.mark.parametrize("start", [None, 26])
+def test_autotune_switched_on_in_a_hot_game_stays_under_the_guards_step(plugin, tmp_path, start):
+    """97 °C, the guard stepped the TDP setting down; Autotune switched on in the game, new to it or with a start
+    level of 26 W saved: the limit stays under the guard's step. It started at 26 W."""
+    p = plugin
+    t = tmp_path / "pkg_temp"
+    p.guard = thermal.Guard(str(t), "x86_pkg_temp")
+    p.ac["plugged"] = False
+    p.settings["autotune"] = p.autotune.enabled = False
+    assert p.run(p.set_tdp(26))["ok"]
+    if start:
+        p.profiles.set("7", False, {"learned": {"ceiling": 26, "start": start, "tdp": start}})
+    p.run(p.game_started("7"))
+    _w(t, 97 * 1000)
+    p.run(p._guard_check())
+    step = p.chip()
+    p.run(p.set_setting("autotune", True))
+    assert step < 26 and p.chip() <= step and p.guard.stepped_w == step and p.autotune.session is not None, p.chip()
+
+
 @pytest.mark.parametrize("source", ["mangoapp", "own log", "none"])
 def test_autotune_switched_on_in_a_running_game_takes_the_frames_there_are(plugin, tmp_path, monkeypatch, source):
     """Launched with Autotune off, switched on in the game: its frames are mangoapp's log of the running game, else
@@ -2086,7 +2147,9 @@ def test_the_autotune_switch_set_to_the_value_it_has_changes_nothing(plugin, sta
         p.run(p.set_setting("autotune", state == "switched on in the game"))
     if state == "switched off in the game":
         assert p.run(p.set_tdp(20))["ok"]
+    before = p.autotune.session
     p.run(p.set_setting("autotune", state != "switched off in the game"))
+    assert p.autotune.session is before                                  # the same session, not a new start
     if state == "switched off in the game":
         assert p.chip() == 20, p.chip()
         return

@@ -129,8 +129,7 @@ manual TDP to put back. `set_autotune_max` in a running game starts the game ove
 `get_power` returns `autotune_max` (the watts that apply here) and `autotune_governs`; the panel shows the maximum's
 slider only while Autotune is on, and greys the TDP slider out while Autotune governs, with the note "Autotune is on,
 so set an FPS target and a wattage limit in the Autotune section." Where Autotune does not govern (on the charger
-without the option, a game with Autotune off, a game it was switched on in: it starts at the next launch) the TDP
-setting is on the chip and its slider moves. Switched off, in a game or in the menus, the TDP setting goes back on the
+without the option, a game with Autotune off) the TDP setting is on the chip and its slider moves. Switched off, in a game or in the menus, the TDP setting goes back on the
 chip. The maximum is never saved as a TDP setting, and Autotune never changes it. Precedent: an own maximum of the
 automatic TDP in three of four projects read; its default from the manual TDP is Handheld Companion's rule; none greys
 the manual TDP out (the user's design).
