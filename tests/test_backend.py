@@ -1613,12 +1613,16 @@ class _Hold(_Game):
         return autotune.Sample(t=self.t, frametime_ms=1000.0 / f, fps=f, **{**base, **self.smp})
 
 
-def test_autotune_waits_while_the_firmware_holds_the_chip_and_starts_over_after(fake_hw, monkeypatch):
+def test_autotune_waits_while_the_firmware_holds_the_chip_and_starts_over_after(fake_hw, monkeypatch, tmp_path):
     """Claw 8 EX, 2026-11-25: after a resume the chip stayed at 10 W under a 32 W limit for 7 min, 13 to 24 fps, and
     Autotune showed 32 of 32 W. Nothing is changed in the hold; after it nothing measured in it is left."""
     at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
+    at.csv_log = str(tmp_path / "autotune.csv")
     g = _Hold(at, 60, 400)
     g.run(60 + autotune.HELD_S + 1.0)
+    with open(at.csv_log) as f:
+        rows = list(csv.DictReader(f))
+    assert rows[-1]["phase"] == "chip" and rows[-1]["max_fps"] == "" and rows[0]["phase"] != "chip"
     st = at.status()
     assert st["chip_w"] == 10 and st["step"] is None and st["max_fps"] is None and st["avg_fps"] is None
     limit = s.learned.tdp
@@ -1636,6 +1640,7 @@ def test_autotune_waits_while_the_firmware_holds_the_chip_and_starts_over_after(
     held = gov.held_s
     while s.chip_held and g.t < g.over + 60:
         at._step()
+        assert at.status()["chip_w"] in (10, None)                  # the hold's watts, not the draw after it
     assert g.over <= g.t < g.over + autotune.HELD_S + 1.0 and at.status()["chip_w"] is None
     assert s.gov is not gov and not s.gov.fail                   # what it measured before the hold was seen is gone
     assert s.gov.held_s is held                                  # ... but not where the game held before it
@@ -1655,7 +1660,7 @@ def test_autotune_takes_only_a_hold_for_a_hold(fake_hw, monkeypatch, smp):
     at.session = None
 
 
-def test_autotune_takes_a_dip_of_two_seconds_and_a_pl2_of_the_user_for_no_hold(fake_hw, monkeypatch, tmp_path):
+def test_autotune_takes_a_dip_of_two_seconds_for_no_hold(fake_hw, monkeypatch):
     at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
     g = _Hold(at, 5, autotune.HELD_S - 1)
     gov = s.gov
@@ -1663,11 +1668,22 @@ def test_autotune_takes_a_dip_of_two_seconds_and_a_pl2_of_the_user_for_no_hold(f
         g.run(1)
         assert not s.chip_held and s.gov is gov
     at.session = None
-    fake_hw.paths.rapl_pl2 = str(tmp_path / "pl2")               # PL2 set to 10 W by the user: the draw is no hold
-    _w(fake_hw.paths.rapl_pl2, 10_000_000)
+
+
+def test_one_low_reading_after_a_pause_is_no_hold(fake_hw, monkeypatch):
+    """A low reading, a pause of 10 s (nothing is looked at while paused), the control handed back by a new target,
+    then one more low reading: no hold. The two readings 12 s apart made one."""
     at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
-    _Hold(at, 5, 60).run(60)
-    assert not s.chip_held
+    at.enabled = True
+    g = _Hold(at, 20, 0.5)
+    g.run(21)
+    at.pause("manual CPU boost")
+    g.run(10)
+    at.set_target(60)
+    assert not s.paused
+    g.began, g.over = g.t, g.t + 0.6                             # the next look only
+    at._step()
+    assert s.low_at == g.t and not s.chip_held
     at.session = None
 
 

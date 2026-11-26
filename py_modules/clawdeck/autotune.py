@@ -16,7 +16,8 @@ the governor gets. Without XeLL, ClawDeck's own frame generation multiplier for 
 
 The loop looks twice a second, and ten times a second for the 1-2.5 s after a write of its own (governor.LOOK_S,
 WATCH_S); one asyncio task, nothing at all when no game runs. While a game runs it is on the E-cores at nice 10
-(quiet.py). Per look: the new lines of two small logs, /proc/stat, two GPU clock files and the RAPL energy counter;
+(quiet.py). Per look: the new lines of two small logs, /proc/stat, two GPU clock files, xe's three power-limit
+reasons and the RAPL energy counter;
 PowerStation's GPU load at most every BUSY_EVERY_S.
 
 What Autotune owns while it governs: PL1; PL2 at PL1 + 2 W, also when you set a PL2 by hand (that one belongs to your
@@ -565,8 +566,9 @@ class Session:
     mult_seen: float | None = None      # the XeLL line it was last taken at, and the shown frames since
     mult_n: int = 0
     mult_ms: float = 0.0
-    low_from: float | None = None       # since when the chip is held under the limit, when it last was, and whether
-    low_at: float | None = None         # that is a hold (HELD_S)
+    low_from: float | None = None       # since when the chip is held under the limit, when it last was, its draw
+    low_at: float | None = None         # then, and whether that is a hold (HELD_S)
+    low_w: float | None = None
     chip_held: bool = False
     refused: bool = False               # the last TDP write was not applied ...
     refused_until: float = -1e9         # ... and until then no other is tried (the governor rests)
@@ -956,11 +958,9 @@ class Autotune:
         """The firmware holds the chip far under the limit: no frame says anything of a limit, so nothing is judged or
         changed. At its end the governor starts over from the limit in use: what it measured since the hold began (the
         first HELD_S) was the hold's."""
-        pl2 = sysfs.read_int(self.hw.paths.rapl_pl2) if self.hw.paths.rapl_pl2 else None
-        limit = s.learned.tdp if not pl2 else min(s.learned.tdp, pl2 / 1_000_000)
-        if smp.power_limited and smp.pkg_w is not None and smp.pkg_w < HELD_SHARE * limit:
-            s.low_at = smp.t
-            s.low_from = smp.t if s.low_from is None else s.low_from
+        if smp.power_limited and smp.pkg_w is not None and smp.pkg_w < HELD_SHARE * s.learned.tdp:
+            s.low_from = smp.t if s.low_from is None or smp.t - s.low_at >= HELD_S else s.low_from
+            s.low_at, s.low_w = smp.t, smp.pkg_w
         elif s.low_at is None or smp.t - s.low_at >= HELD_S:
             s.low_from = None
         held = s.low_from is not None and s.low_at - s.low_from >= HELD_S
@@ -1095,7 +1095,7 @@ class Autotune:
                 "max_fps": r(l.max_fps), "avg_fps": r(s.avg_fps), "low_fps": r(s.low_fps),
                 "fps_per_w": None if s.fps_per_w is None else round(s.fps_per_w, 2), "source": s.source,
                 "multiplier": s.multiplier, "window_s": governor.DWELL_S, "thermal_cap": s.thermal_cap,
-                "chip_w": round(last.pkg_w) if s.chip_held and not s.paused and last and last.pkg_w is not None else None,
+                "chip_w": round(s.low_w) if s.chip_held and not s.paused else None,
                 "no_frames": s.no_frames, "own_pace": s.own_pace, "own_pace_why": OWN_PACE.get(s.own_pace or ""),
                 "learning": governing and not s.settled,
                 "pl1_window_s": None if self.power.pl1_window_us() is None else round(self.power.pl1_window_us() / 1e6, 1),

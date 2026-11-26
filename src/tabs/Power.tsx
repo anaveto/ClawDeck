@@ -180,7 +180,7 @@ export const PowerTab: FC<{ quick?: boolean }> = ({ quick }) => {
   const thermalLine = at?.thermal?.line ?? null;     // "thermal: stepped to 15 W" once the temperature guard acted
   const step = { probe: "trying fewer watts", back: "took the step back", recover: "full limit after a loss",
     check: "checking what your limit gives", hold: "" }[at?.step ?? "hold"];
-  const phase = step || (at?.target ? `holding ${at.target} fps` : "holding");
+  const phase = at?.chip_w != null ? "waiting for the firmware" : step || (at?.target ? `holding ${at.target} fps` : "holding");
   // "25 W max → using 17 W · 58 fps (97 % of 60) · 3.4 fps/W": rendered frames; with frame generation, what is shown too
   const fpsText = at?.avg_fps != null
     ? `${Math.round(at.avg_fps)} fps` + (at.target ? ` (target ${at.target}${at.unreachable && at.user_target && at.target < at.user_target ? `, ${at.user_target} out of reach` : at.unreachable ? ", out of reach" : ""})` : "") +
