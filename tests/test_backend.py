@@ -1611,9 +1611,9 @@ def test_the_toast_after_a_game_that_ends_in_a_hold_says_what_was_saved(plugin):
 
 class _Hold(_Game):
     """A game at 32 W that the firmware holds at 10 W from `at_s` for `for_s`: 13 fps there, 57 outside."""
-    def __init__(self, at, at_s, for_s, reason=True, **kw):
+    def __init__(self, at, at_s, for_s, reason=True, share=None, **kw):
         super().__init__(at, lambda *_: 13.0, **kw)
-        self.began, self.over, self.reason = self.t + at_s, self.t + at_s + for_s, reason
+        self.began, self.over, self.reason, self.share = self.t + at_s, self.t + at_s + for_s, reason, share
 
     def held(self):
         return self.began <= self.t < self.over
@@ -1623,7 +1623,8 @@ class _Hold(_Game):
         self.t += s.look_s
         hold = self.held()
         f = 13.0 if hold else 57.0 * min(1.0, s.learned.tdp / 29.0) ** 0.7
-        base = dict(gpu_mhz=1500, gpu_max_mhz=2400, cpu_pct=40, pkg_w=9.9 if hold else min(float(s.learned.tdp), 29.0),
+        low = 9.9 if self.share is None else self.share * s.learned.tdp
+        base = dict(gpu_mhz=1500, gpu_max_mhz=2400, cpu_pct=40, pkg_w=low if hold else min(float(s.learned.tdp), 29.0),
                     gpu_busy=95, source="presented", shown_fps=f, power_limited=self.reason if hold else False)
         return autotune.Sample(t=self.t, frametime_ms=1000.0 / f, fps=f, **{**base, **self.smp})
 
@@ -1656,7 +1657,7 @@ def test_autotune_waits_while_the_firmware_holds_the_chip_and_starts_over_after(
     while s.chip_held and g.t < g.over + 60:
         at._step()
         assert at.status()["chip_w"] in (10, None)                  # the hold's watts, not the draw after it
-    assert g.over <= g.t < g.over + autotune.HELD_S + 1.0 and at.status()["chip_w"] is None
+    assert g.over <= g.t < g.over + 1.0 and at.status()["chip_w"] is None        # the draw is back: over at once
     assert s.gov is not gov and not s.gov.fail                   # what it measured before the hold was seen is gone
     assert s.gov.held_s is held                                  # ... but not where the game held before it
     assert s.gov.ref is None or s.gov.ref > 40
@@ -1665,13 +1666,43 @@ def test_autotune_waits_while_the_firmware_holds_the_chip_and_starts_over_after(
     at.session = None
 
 
-@pytest.mark.parametrize("smp", [dict(pkg_w=30.0), dict(power_limited=False), dict(power_limited=None)],
-                         ids=["draws the limit", "no power-limit reason", "not readable"])
-def test_autotune_takes_only_a_hold_for_a_hold(fake_hw, monkeypatch, smp):
+@pytest.mark.parametrize("kw", [dict(share=0.95), dict(share=0.7), dict(power_limited=False), dict(power_limited=None)],
+                         ids=["draws the limit", "draws 70 % of it", "no power-limit reason", "not readable"])
+def test_autotune_takes_only_a_hold_for_a_hold(fake_hw, monkeypatch, kw):
     at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
-    g = _Hold(at, 0, 1e9, **smp)
+    g = _Hold(at, 0, 1e9, **kw)
     g.run(60)
     assert not s.chip_held and at.status()["chip_w"] is None
+    at.session = None
+
+
+class _Blips(_Hold):
+    """Low readings with the reason for 0.5 s at each of `at`, the limit's draw between them."""
+    def __init__(self, at, blips):
+        super().__init__(at, 0, 0)
+        self.blips = [self.t + b for b in blips]
+
+    def held(self):
+        return any(b <= self.t < b + 0.5 for b in self.blips)
+
+
+def test_two_low_readings_3_s_apart_with_the_limits_draw_between_are_no_hold(fake_hw, monkeypatch):
+    """Two low readings 3 s apart, the package at the limit's draw in between: no hold. They made one, and a pair a
+    minute made 15 fresh governors and 4 writes a minute in 15 minutes."""
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
+    g = _Blips(at, [60.0, 63.0])
+    gov = s.gov
+    g.run(70)
+    assert s.gov is gov and s.low_at is not None and not s.chip_held
+    at.session = None
+
+
+def test_a_hold_paused_by_hand_is_not_shown_as_the_firmwares(fake_hw, monkeypatch):
+    at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
+    _Hold(at, 10, 60).run(10 + autotune.HELD_S + 1.0)
+    assert at.status()["chip_w"] == 10
+    at.pause("manual CPU boost")
+    assert at.status()["chip_w"] is None
     at.session = None
 
 
@@ -1690,13 +1721,13 @@ def test_one_low_reading_after_a_pause_is_no_hold(fake_hw, monkeypatch):
     then one more low reading: no hold. The two readings 12 s apart made one."""
     at, s = _tuner(fake_hw, monkeypatch, ceiling=32, target=60)
     at.enabled = True
-    g = _Hold(at, 20, 0.5)
-    g.run(21)
-    at.pause("manual CPU boost")
+    g = _Hold(at, 20, 1e9)
+    while s.low_at is None:
+        at._step()
+    at.pause("manual CPU boost")                                 # at once: no reading between
     g.run(10)
     at.set_target(60)
     assert not s.paused
-    g.began, g.over = g.t, g.t + 0.6                             # the next look only
     at._step()
     assert s.low_at == g.t and not s.chip_held
     at.session = None
@@ -1710,6 +1741,9 @@ def test_the_sampler_reads_xes_power_limit_reasons(fake_hw, tmp_path):
     assert smp.power_limited() is None                           # no xe throttle directory
     fake_hw.paths.gpu_throttle = str(d)
     assert smp.power_limited() is False
+    _w(str(d / "reason_pl2"), 1)                                  # PL2 alone: 126 of the 406 rows of the hold of 11-25
+    assert smp.power_limited() is True
+    _w(str(d / "reason_pl2"), 0)
     _w(str(d / "reason_pl4"), 1)
     assert smp.power_limited() is True
 
