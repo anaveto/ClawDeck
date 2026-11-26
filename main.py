@@ -442,10 +442,6 @@ class Plugin:
         if key == "autotune":
             self.autotune.enabled = bool(value)
             self._autotune_flag(bool(value))
-            # switched on while a game runs: MangoHud's frame-time log, which Autotune reads, is only put in at a
-            # game's launch, so this game has none (it showed "starting…" for good, maintainer 2026-11-05)
-            if bool(value) != bool(was):
-                self._autotune_late = {self.running_appid, self._game_key()} if value and self.running_appid else set()
         charger = (key == "autotune_plugged" and bool(value) != bool(was) and self.settings.get("autotune")
                    and self.running_appid is not None and bool(self.running_plugged))
         if (key == "autotune" or charger) and not value:
@@ -460,6 +456,11 @@ class Plugin:
                 self._save_learned(self._game_key(), bool(self.running_plugged))
                 self.running_plugged = True
                 self._restart_game_power(self._game_key(), True)
+        if key == "autotune" and value and not was and self.running_appid is not None:
+            # switched on while a game runs: it starts in the game, on mangoapp's frames (any running game has them)
+            async with self._power_lock:
+                self._save_learned(self._game_key(), bool(self.running_plugged))
+                self._restart_game_power(self._game_key(), self._plugged())
         if key in ("autotune", "autotune_plugged") and self.running_appid is None and self.settings.get("autotune_max"):
             async with self._power_lock:
                 self._apply_idle_pick(bool(self.battery.plugged()))
@@ -847,8 +848,7 @@ class Plugin:
         battery) plugged in only when the user asked for that too (Advanced). Where it does not, the TDP setting is
         the limit."""
         return bool(self.settings.get("autotune") and prof.get("autotune", True)
-                    and (not plugged or self.settings.get("autotune_plugged"))
-                    and not (self.running_appid is not None and self._game_key() in getattr(self, "_autotune_late", ())))
+                    and (not plugged or self.settings.get("autotune_plugged")))
 
     def _limit_overrides(self, pk: dict, plugged: bool) -> dict:
         """What goes on the chip with a pick. Where Autotune sets the limit and has a maximum of its own, that is the
@@ -982,7 +982,6 @@ class Plugin:
             self.running_key, self.running_title = appid, None
             self._watch_frontend(True)
             self._holding_pick = False
-            self._autotune_late = set()
             self.power.revert_all(keep_thermald=True)   # the game starts from what was there before ClawDeck + its pick
             return self._start_game_power(appid, plugged)
 
@@ -1028,8 +1027,6 @@ class Plugin:
             self._save_learned(self._game_key(), bool(self.running_plugged))
             self.running_plugged, self.running_key = plugged, key
             self.running_title = ev["name"] if ev["event"] == "start" else None
-            if ev["event"] == "start":
-                self._autotune_late = set(getattr(self, "_autotune_late", ())) - {key}
             decky.logger.info("frontend: %s %s (%s): power and Autotune as %s", "started" if ev["event"] == "start"
                               else "ended", ev["name"], ev["system"], key)
             return self._restart_game_power(key, plugged)
@@ -1202,8 +1199,6 @@ class Plugin:
             return "off on the charger (Advanced → Autotune on the charger)"
         if self.profiles.get(self._game_key(), plugged).get("autotune") is False:
             return "off for this game"
-        if self._game_key() in getattr(self, "_autotune_late", ()):
-            return "turned on during this game: restart the game and it starts"
         if not shutil.which("mangohud"):
             return "MangoHud isn't installed, and Autotune reads frame times through it"
         return "waiting for the game's first frame times (start a level, not a menu)"
